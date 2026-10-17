@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react'
+import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import {
   X,
   Download,
@@ -27,6 +27,7 @@ import {
   createExportPlan,
   exportSmoothedVideo,
   formatDuration,
+  isMobileDevice,
   RenderStats,
 } from '../utils/videoProcessor'
 import { Language, translations } from '../utils/i18n'
@@ -57,6 +58,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({
   lang,
 }) => {
   const t = translations[lang]
+  const isMobile = useMemo(() => isMobileDevice(), [])
   const [exportSettings, setExportSettings] = useState<ExportSettings>({
     fps: 60,
     resolution: '1080p',
@@ -154,7 +156,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({
         videoSrc,
         smoothSettings,
         exportSettings,
-        (stats) => setProgressStats(stats),
+        (stats: RenderStats) => setProgressStats(stats),
         () => cancelRef.current,
         trimRange,
         transformSettings,
@@ -270,11 +272,10 @@ export const ExportModal: React.FC<ExportModalProps> = ({
                       key={fpsVal}
                       type="button"
                       onClick={() => setExportSettings((prev) => ({ ...prev, fps: fpsVal }))}
-                      className={`p-2 sm:p-3 rounded-xl border text-center transition-all cursor-pointer ${
-                        exportSettings.fps === fpsVal
-                          ? 'bg-violet-950/60 border-violet-500 text-white shadow-lg shadow-violet-600/20 ring-1 ring-violet-500'
-                          : 'bg-slate-900/50 border-white/[0.06] text-slate-300 hover:bg-slate-800/60'
-                      }`}
+                      className={`p-2 sm:p-3 rounded-xl border text-center transition-all cursor-pointer ${exportSettings.fps === fpsVal
+                        ? 'bg-violet-950/60 border-violet-500 text-white shadow-lg shadow-violet-600/20 ring-1 ring-violet-500'
+                        : 'bg-slate-900/50 border-white/[0.06] text-slate-300 hover:bg-slate-800/60'
+                        }`}
                     >
                       <div className="text-sm sm:text-lg font-bold font-mono text-white whitespace-nowrap">{fpsVal} FPS</div>
                       <div className="text-[9px] sm:text-[10px] text-slate-400 mt-0.5 leading-tight">
@@ -285,6 +286,12 @@ export const ExportModal: React.FC<ExportModalProps> = ({
                     </button>
                   ))}
                 </div>
+                {isMobile && exportSettings.fps === 120 && (
+                  <div className="text-[11px] text-amber-300 bg-amber-950/40 border border-amber-500/30 rounded-xl p-2.5 flex items-start gap-2 animate-in fade-in">
+                    <span className="text-sm shrink-0">⚠️</span>
+                    <span className="leading-tight">{t.mobileFpsWarning}</span>
+                  </div>
+                )}
               </div>
 
               {/* Resolution Selection */}
@@ -307,11 +314,10 @@ export const ExportModal: React.FC<ExportModalProps> = ({
                       onClick={() =>
                         setExportSettings((prev) => ({ ...prev, resolution: item.key }))
                       }
-                      className={`p-2 sm:p-3 rounded-xl border text-center transition-all cursor-pointer ${
-                        exportSettings.resolution === item.key
-                          ? 'bg-violet-950/60 border-violet-500 text-white shadow-lg shadow-violet-600/20 ring-1 ring-violet-500'
-                          : 'bg-slate-900/50 border-white/[0.06] text-slate-300 hover:bg-slate-800/60'
-                      }`}
+                      className={`p-2 sm:p-3 rounded-xl border text-center transition-all cursor-pointer ${exportSettings.resolution === item.key
+                        ? 'bg-violet-950/60 border-violet-500 text-white shadow-lg shadow-violet-600/20 ring-1 ring-violet-500'
+                        : 'bg-slate-900/50 border-white/[0.06] text-slate-300 hover:bg-slate-800/60'
+                        }`}
                     >
                       <div className="text-xs sm:text-base font-bold text-white whitespace-nowrap">{item.title}</div>
                       <div className="text-[9px] sm:text-[10px] text-slate-400 mt-0.5 leading-tight">{item.desc}</div>
@@ -515,7 +521,14 @@ export const ExportModal: React.FC<ExportModalProps> = ({
               className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-violet-600 via-indigo-600 to-cyan-500 hover:from-violet-500 hover:via-indigo-500 hover:to-cyan-400 text-white text-xs font-bold shadow-lg shadow-violet-600/30 transition-all cursor-pointer"
             >
               <Sparkles className="w-4 h-4" />
-              <span>{t.startExportBtn} ({exportSettings.fps} FPS • {formatDuration(exportPlan.totalOutputDuration)})</span>
+              <div className='flex flex-col gap-0'>
+                <span>
+                  {t.startExportBtn}
+                </span>
+                <p className="text-xs">
+                  {exportSettings.fps} FPS • {formatDuration(exportPlan.totalOutputDuration)}
+                </p>
+              </div>
             </button>
           </div>
         )}

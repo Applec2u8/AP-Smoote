@@ -173,11 +173,13 @@ export const translations = {
     speedFactorWord: 'ຄວາມໄວວິດີໂອ:',
     totalRenderFrames: 'ຈຳນວນເຟຣມທັງໝົດ:',
     newExportBtn: 'Export ວິດີໂອໃໝ່ / ປັບແຕ່ງຕໍ່',
+    mobileFpsWarning: 'ອຸປະກອນມືຖືອາດບໍ່ຮອງຮັບ 120 FPS (ແນະນຳ 60 FPS ເພື່ອຄວາມສະຖຽນ ແລະ ປ້ອງກັນເຟຣມຕົກ / มือถืออาจไม่รองรับ 120 FPS)',
+    mobileAdaptiveNotice: 'Adaptive Mobile: ປັບຂະໜາດເໝາະສົມກັບຮາດແວມືຖື ເພື່ອປ້ອງກັນເຟຣມຕົກ',
     exportSuccessTitle: 'Export ວິດີໂອ MP4 ສຳເລັດຮຽບຮ້ອຍ!',
     exportSuccessDesc: 'ໄຟລ໌ .mp4 ພ້ອມເປີດຫຼິ້ນໃນ iPhone, iPad, Android ແລະ ຄອມພິວເຕີໄດ້ທັນທີ',
     downloadAgainBtn: 'ດາວໂຫຼດອີກຄັ້ງ (.mp4)',
     closeModalBtn: 'ປິດໜ້າຕ່າງ',
-    startExportBtn: 'ເລີ່ມການ Export MP4',
+    startExportBtn: 'Export MP4',
     cancelWord: 'ຍົກເລີກ',
 
     // History Modal
@@ -388,6 +390,8 @@ export const translations = {
     speedFactorWord: 'Speed Multiplier:',
     totalRenderFrames: 'Total Render Frames:',
     newExportBtn: 'Export New Video / Edit Settings',
+    mobileFpsWarning: 'Mobile hardware may not support 120 FPS export. 60 FPS is strongly recommended to prevent frame drops.',
+    mobileAdaptiveNotice: 'Adaptive Mobile: Optimized resolution for mobile hardware to ensure stable 60 FPS export',
     exportSuccessTitle: 'MP4 Export Completed Successfully!',
     exportSuccessDesc: 'Your .mp4 file is ready and natively playable in iOS Photos, Android & PC.',
     downloadAgainBtn: 'Download Again (.mp4)',

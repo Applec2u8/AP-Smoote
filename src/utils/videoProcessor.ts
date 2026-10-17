@@ -155,7 +155,18 @@ export function applyFrameEffects(
 }
 
 /**
- * Calculates output dimensions based on target resolution and aspect ratio (strictly aligned to even numbers for H.264 MP4)
+ * Detects if the current client is a mobile device (iPhone, iPad, Android).
+ */
+export function isMobileDevice(): boolean {
+  if (typeof navigator === 'undefined') return false
+  const ua = navigator.userAgent || ''
+  return /Android|iPhone|iPad|iPod|Mobile|Silk/i.test(ua) || (navigator.maxTouchPoints > 1 && /Macintosh/i.test(ua))
+}
+
+/**
+ * Calculates output dimensions based on target resolution and aspect ratio.
+ * Ensures ultrawide mobile recordings fit within standard bounding boxes (1920x1080)
+ * and strictly aligns dimensions to multiples of 8 for H.264 / WebCodecs hardware compatibility.
  */
 export function calculateTargetDimensions(
   origWidth: number,
@@ -190,22 +201,45 @@ export function calculateTargetDimensions(
       }
     }
   } else {
-    let standardBase = 1080
-    if (targetRes === '720p') standardBase = 720
-    if (targetRes === '480p') standardBase = 480
+    // Bounding boxes for standard resolutions
+    let maxBoxW = 1920
+    let maxBoxH = 1080
+    if (targetRes === '720p') {
+      maxBoxW = 1280
+      maxBoxH = 720
+    } else if (targetRes === '480p') {
+      maxBoxW = 854
+      maxBoxH = 480
+    }
 
     if (baseRatio >= 1) {
-      targetHeight = standardBase
-      targetWidth = Math.round(standardBase * baseRatio)
+      // Landscape: fit within maxBoxW x maxBoxH
+      if (maxBoxW / maxBoxH > baseRatio) {
+        // Height-bound
+        targetHeight = maxBoxH
+        targetWidth = Math.round(maxBoxH * baseRatio)
+      } else {
+        // Width-bound (e.g. mobile ultrawide 2334x1080 -> 1920x888)
+        targetWidth = maxBoxW
+        targetHeight = Math.round(maxBoxW / baseRatio)
+      }
     } else {
-      targetWidth = standardBase
-      targetHeight = Math.round(standardBase / baseRatio)
+      // Portrait: fit within maxBoxH x maxBoxW (e.g. 1080x1920)
+      const portW = maxBoxH
+      const portH = maxBoxW
+      if (portW / portH > baseRatio) {
+        targetHeight = portH
+        targetWidth = Math.round(portH * baseRatio)
+      } else {
+        targetWidth = portW
+        targetHeight = Math.round(portW / baseRatio)
+      }
     }
   }
 
-  // Align to even numbers (essential for MP4 H.264 encoder)
-  targetWidth = Math.floor(targetWidth / 2) * 2
-  targetHeight = Math.floor(targetHeight / 2) * 2
+  // Strictly align to multiples of 8 (ensures clean macroblock encoding without green lines/glitches)
+  targetWidth = Math.max(16, Math.floor(targetWidth / 8) * 8)
+  targetHeight = Math.max(16, Math.floor(targetHeight / 8) * 8)
 
   return { width: targetWidth, height: targetHeight }
 }
@@ -803,12 +837,56 @@ export async function exportSmoothedVideo(
       mediaRecorder.onerror = (e) => reject(e)
       mediaRecorder.start(200)
 
-      const startTime = performance.now()
+      let currentSegIndex = 0
       let animId: number
+      const startAllTime = performance.now()
+      const totalOutDur = plan.totalOutputDuration
 
-      const renderLoop = () => {
+      // Prime first segment
+      const firstSeg = plan.segments[0]
+      if (firstSeg) {
+        video.currentTime = firstSeg.start
+        await new Promise<void>((res) => {
+          const onSeek = () => {
+            video.removeEventListener('seeked', onSeek)
+            res()
+          }
+          video.addEventListener('seeked', onSeek, { once: true })
+          if (video.readyState >= 2) res()
+          setTimeout(res, 250)
+        })
+        video.playbackRate = Math.min(4.0, Math.max(0.1, firstSeg.speed))
+      }
+
+      try {
+        await video.play()
+      } catch {
+        // Fallback if autoplay was blocked
+      }
+
+      let isFinishing = false
+      const finishExport = () => {
+        if (isFinishing) return
+        isFinishing = true
+        cancelAnimationFrame(animId)
+        video.pause()
+        onProgress({
+          currentFps: plan.targetFps,
+          renderedFrames: plan.totalFrames,
+          totalFrames: plan.totalFrames,
+          progress: 100,
+        })
+        setTimeout(() => {
+          try {
+            mediaRecorder.stop()
+          } catch {}
+        }, 150)
+      }
+
+      const renderLoop = async () => {
         if (isCancelled()) {
           cancelAnimationFrame(animId)
+          video.pause()
           try {
             mediaRecorder.stop()
           } catch {}
@@ -816,27 +894,40 @@ export async function exportSmoothedVideo(
           return
         }
 
-        const elapsedSec = (performance.now() - startTime) / 1000
-        if (elapsedSec >= plan.totalOutputDuration) {
-          cancelAnimationFrame(animId)
-          onProgress({
-            currentFps: plan.targetFps,
-            renderedFrames: plan.totalFrames,
-            totalFrames: plan.totalFrames,
-            progress: 100,
-          })
-          setTimeout(() => {
-            try {
-              mediaRecorder.stop()
-            } catch {}
-          }, 150)
+        const currentSeg = plan.segments[currentSegIndex]
+        if (!currentSeg) {
+          finishExport()
           return
         }
 
-        const { sourceTime, smoothSettings: effSmooth, transformSettings: effTransform } =
-          plan.mapOutputTimeToSource(elapsedSec)
+        // Switch segments smoothly when current segment boundary is reached
+        if (video.currentTime >= currentSeg.end - 0.03 || video.ended) {
+          currentSegIndex++
+          if (currentSegIndex >= plan.segments.length) {
+            finishExport()
+            return
+          }
 
-        video.currentTime = sourceTime
+          const nextSeg = plan.segments[currentSegIndex]
+          video.pause()
+          video.currentTime = nextSeg.start
+          video.playbackRate = Math.min(4.0, Math.max(0.1, nextSeg.speed))
+          await new Promise<void>((res) => {
+            const onSeek = () => {
+              video.removeEventListener('seeked', onSeek)
+              res()
+            }
+            video.addEventListener('seeked', onSeek, { once: true })
+            if (video.readyState >= 2) res()
+            setTimeout(res, 250)
+          })
+          try {
+            await video.play()
+          } catch {}
+        }
+
+        const effTransform = currentSeg.transformSettings
+        const effSmooth = currentSeg.smoothSettings
 
         // Shift history frames
         for (let i = historyCanvases.length - 1; i > 0; i--) {
@@ -868,8 +959,9 @@ export async function exportSmoothedVideo(
         ctx.clearRect(0, 0, width, height)
         applyFrameEffects(ctx, video, width, height, effSmooth, historyCanvases, effTransform)
 
-        const progress = Math.min(99, Math.round((elapsedSec / plan.totalOutputDuration) * 100))
-        const renderedFrames = Math.round(elapsedSec * plan.targetFps)
+        const totalElapsed = (performance.now() - startAllTime) / 1000
+        const progress = Math.min(99, Math.round((totalElapsed / Math.max(0.1, totalOutDur)) * 100))
+        const renderedFrames = Math.min(plan.totalFrames, Math.round(totalElapsed * plan.targetFps))
 
         onProgress({
           currentFps: plan.targetFps,
@@ -877,6 +969,11 @@ export async function exportSmoothedVideo(
           totalFrames: plan.totalFrames,
           progress,
         })
+
+        if (totalElapsed >= totalOutDur + 0.5) {
+          finishExport()
+          return
+        }
 
         animId = requestAnimationFrame(renderLoop)
       }
