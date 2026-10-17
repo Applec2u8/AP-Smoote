@@ -322,22 +322,55 @@ export function App() {
     reloadLocalProjects()
   }, [reloadSupabaseStatus, reloadLocalProjects])
 
-  // Revoke object URLs to avoid memory leaks
-  const cleanCurrentVideoUrl = () => {
-    if (videoUrl && videoUrl.startsWith('blob:')) {
-      URL.revokeObjectURL(videoUrl)
-    }
-  }
+  // Active Object URL reference for leak-free memory cleanup
+  const activeBlobUrlRef = useRef<string | null>(null)
 
-  // 1. Auto-Restore session from IndexedDB on initial mount (Active Session -> Legacy Video)
+  // Safely updates videoUrl and immediately revokes the previous Blob URL to prevent memory leaks and stream collisions
+  const updateActiveVideoUrl = useCallback((newUrl: string | null) => {
+    if (activeBlobUrlRef.current && activeBlobUrlRef.current !== newUrl) {
+      if (activeBlobUrlRef.current.startsWith('blob:')) {
+        try {
+          URL.revokeObjectURL(activeBlobUrlRef.current)
+        } catch (e) {
+          console.warn('Failed to revoke previous video object URL:', e)
+        }
+      }
+    }
+    activeBlobUrlRef.current = newUrl
+    setVideoUrl(newUrl)
+  }, [])
+
+  // Cleanup active blob URL on unmount
+  useEffect(() => {
+    return () => {
+      if (activeBlobUrlRef.current && activeBlobUrlRef.current.startsWith('blob:')) {
+        try {
+          URL.revokeObjectURL(activeBlobUrlRef.current)
+        } catch {}
+      }
+    }
+  }, [])
+
+  // 1. Initial Route Logic & Session Restore on initial mount / page refresh
   useEffect(() => {
     async function restoreSession() {
       try {
+        const activeProjectIdInStorage = localStorage.getItem('smoot_active_project_id')
+
+        // INITIAL ROUTE LOGIC:
+        // If no active project ID is found (user closed video or no active project),
+        // strictly keep user on Home / Landing page. Never redirect back into Edit/Workspace!
+        if (!activeProjectIdInStorage) {
+          await clearActiveSessionFromIDB().catch(() => {})
+          await clearVideoFromIDB().catch(() => {})
+          return
+        }
+
         // Priority 1: Check active session in IndexedDB (Full Project Item with video Blob)
         const activeSession = await getActiveSessionFromIDB()
-        if (activeSession && activeSession.videoBlob) {
+        if (activeSession && activeSession.videoBlob && activeSession.id === activeProjectIdInStorage) {
           const url = URL.createObjectURL(activeSession.videoBlob)
-          setVideoUrl(url)
+          updateActiveVideoUrl(url)
           setVideoFile(new File([activeSession.videoBlob], activeSession.videoName, { type: activeSession.videoType }))
           setActiveProjectId(activeSession.id)
           if (activeSession.name) setProjectName(activeSession.name)
@@ -365,53 +398,10 @@ export function App() {
           return
         }
 
-        // Priority 2: Fallback to legacy video restore
-        const stored = await getVideoFromIDB()
-        if (stored && stored.blob) {
-          const url = URL.createObjectURL(stored.blob)
-          setVideoUrl(url)
-          setVideoFile(new File([stored.blob], stored.name, { type: stored.type }))
-
-          const savedName = localStorage.getItem('smoot_project_name')
-          if (savedName) setProjectName(savedName)
-
-          const savedMeta = localStorage.getItem('smoot_metadata')
-          if (savedMeta) {
-            try {
-              setMetadata(JSON.parse(savedMeta))
-            } catch {
-              // ignore
-            }
-          }
-
-          let loadedBlocks: TimeBlock[] = []
-          const savedBlocks = localStorage.getItem('smoot_time_blocks')
-          if (savedBlocks) {
-            try {
-              const parsed = JSON.parse(savedBlocks)
-              if (Array.isArray(parsed) && parsed.length > 0) {
-                loadedBlocks = parsed
-                setTimeBlocks(parsed)
-                setSelectedBlockId(parsed[0].id)
-              }
-            } catch {
-              // ignore
-            }
-          }
-
-          // Initial snapshot for restored session
-          const initialSnap: HistorySnapshot = {
-            timeBlocks: loadedBlocks,
-            smoothSettings,
-            transformSettings,
-            selectedBlockId: loadedBlocks[0]?.id || null,
-          }
-          setHistoryStack([initialSnap])
-          setHistoryIndex(0)
-
-          setShowRestoredNotice(true)
-          setTimeout(() => setShowRestoredNotice(false), 5000)
-        }
+        // If session not found or ID mismatched, clean up and stay on Home page!
+        await clearActiveSessionFromIDB().catch(() => {})
+        await clearVideoFromIDB().catch(() => {})
+        localStorage.removeItem('smoot_active_project_id')
       } catch (err) {
         console.warn('Failed to restore session:', err)
       }
@@ -420,30 +410,36 @@ export function App() {
     restoreSession()
   }, [])
 
-  // 2. Real-time Persistence to localStorage whenever state changes
+  // 2. Real-time Persistence to localStorage whenever state changes (only during active editing)
   useEffect(() => {
-    if (projectName) localStorage.setItem('smoot_project_name', projectName)
-  }, [projectName])
+    if (activeProjectId && videoUrl && projectName) {
+      localStorage.setItem('smoot_project_name', projectName)
+    }
+  }, [projectName, activeProjectId, videoUrl])
 
   useEffect(() => {
-    localStorage.setItem('smoot_settings', JSON.stringify(smoothSettings))
-  }, [smoothSettings])
+    if (activeProjectId && videoUrl) {
+      localStorage.setItem('smoot_settings', JSON.stringify(smoothSettings))
+    }
+  }, [smoothSettings, activeProjectId, videoUrl])
 
   useEffect(() => {
-    localStorage.setItem('smoot_transform', JSON.stringify(transformSettings))
-  }, [transformSettings])
+    if (activeProjectId && videoUrl) {
+      localStorage.setItem('smoot_transform', JSON.stringify(transformSettings))
+    }
+  }, [transformSettings, activeProjectId, videoUrl])
 
   useEffect(() => {
-    if (timeBlocks && timeBlocks.length > 0) {
+    if (activeProjectId && videoUrl && timeBlocks && timeBlocks.length > 0) {
       localStorage.setItem('smoot_time_blocks', JSON.stringify(timeBlocks))
     }
-  }, [timeBlocks])
+  }, [timeBlocks, activeProjectId, videoUrl])
 
   useEffect(() => {
-    if (metadata) {
+    if (activeProjectId && videoUrl && metadata) {
       localStorage.setItem('smoot_metadata', JSON.stringify(metadata))
     }
-  }, [metadata])
+  }, [metadata, activeProjectId, videoUrl])
 
   // 3. Real-time Auto-Save session to IndexedDB (debounced)
   useEffect(() => {
@@ -515,10 +511,9 @@ export function App() {
 
   // Handle local video selection
   const handleVideoSelected = async (file: File) => {
-    cleanCurrentVideoUrl()
     const url = URL.createObjectURL(file)
+    updateActiveVideoUrl(url)
     setVideoFile(file)
-    setVideoUrl(url)
     const cleanName = file.name.replace(/\.[^/.]+$/, '')
     const name = cleanName || (lang === 'la' ? 'ໂປຣເຈັກ Smoot' : 'My Smooth Project')
     setProjectName(name)
@@ -539,6 +534,7 @@ export function App() {
 
     const newProjId = `proj_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`
     setActiveProjectId(newProjId)
+    localStorage.setItem('smoot_active_project_id', newProjId)
 
     // Generate initial thumbnail
     const thumb = await generateVideoThumbnail(file)
@@ -583,11 +579,10 @@ export function App() {
 
   // Handle Demo Video Generation
   const handleLoadDemo = async () => {
-    cleanCurrentVideoUrl()
     setIsGeneratingDemo(true)
     try {
       const demo = await generateDemoVideoBlob()
-      setVideoUrl(demo.url)
+      updateActiveVideoUrl(demo.url)
       const demoFile = new File([demo.blob], demo.name, { type: 'video/webm' })
       setVideoFile(demoFile)
       const name = lang === 'la' ? 'ວິດີໂອຕົວຢ່າງ Motion (30 FPS)' : 'Motion Demo (30 FPS)'
@@ -618,6 +613,7 @@ export function App() {
 
       const demoProjId = `proj_demo_${Date.now().toString(36)}`
       setActiveProjectId(demoProjId)
+      localStorage.setItem('smoot_active_project_id', demoProjId)
 
       const thumb = await generateVideoThumbnail(demo.blob)
 
@@ -752,12 +748,12 @@ export function App() {
   // Handle Load project 100% from IndexedDB (Video Blob + Settings)
   const handleOpenLocalProject = async (proj: ProjectItem) => {
     try {
-      cleanCurrentVideoUrl()
       const newUrl = URL.createObjectURL(proj.videoBlob)
+      updateActiveVideoUrl(newUrl)
       const file = new File([proj.videoBlob], proj.videoName, { type: proj.videoType })
-      setVideoUrl(newUrl)
       setVideoFile(file)
       setActiveProjectId(proj.id)
+      localStorage.setItem('smoot_active_project_id', proj.id)
       setProjectName(proj.name)
       if (proj.metadata) setMetadata(proj.metadata)
       if (proj.smoothSettings) setSmoothSettings(proj.smoothSettings)
@@ -833,8 +829,7 @@ export function App() {
 
   // Create New Project / Close project & return to manager/uploader
   const handleNewProject = async () => {
-    cleanCurrentVideoUrl()
-    setVideoUrl(null)
+    updateActiveVideoUrl(null)
     setVideoFile(null)
     setMetadata(null)
     setActiveProjectId(null)
@@ -844,17 +839,35 @@ export function App() {
     setSmoothSettings(defaultSmoothSettings)
     setHistoryStack([])
     setHistoryIndex(-1)
+    setProjectName(lang === 'la' ? 'ໂປຣເຈັກ Smoot' : 'My Smooth Project')
 
-    await clearActiveSessionFromIDB()
+    // 1. Clear Active Session and Legacy Video from IndexedDB
+    await clearActiveSessionFromIDB().catch(() => {})
+    await clearVideoFromIDB().catch(() => {})
+
+    // 2. Clear Active Project ID, Editing State, and Route Draft from localStorage & sessionStorage
+    localStorage.removeItem('smoot_active_project_id')
     localStorage.removeItem('smoot_project_name')
     localStorage.removeItem('smoot_metadata')
     localStorage.removeItem('smoot_time_blocks')
+    localStorage.removeItem('smoot_settings')
+    localStorage.removeItem('smoot_transform')
+    localStorage.removeItem('smoot_route_draft')
+
+    // Clear all sessionStorage draft items
+    sessionStorage.clear()
   }
 
   const handleClearVideo = handleNewProject
 
   return (
-    <div className={`${videoUrl ? 'h-full h-[100dvh] max-h-[100dvh] overflow-hidden' : 'min-h-[100dvh]'} flex flex-col bg-[#08090e] text-slate-100 selection:bg-violet-600/30 selection:text-violet-200`}>
+    <div
+      className={`w-full ${
+        videoUrl
+          ? 'h-full h-[100dvh] max-h-[100dvh] overflow-hidden'
+          : 'min-h-screen min-h-[100dvh] overflow-x-hidden'
+      } flex flex-col bg-[#08090e] text-slate-100 selection:bg-violet-600/30 selection:text-violet-200`}
+    >
       {/* Top Navbar with Undo & Redo buttons */}
       <Navbar
         projectName={projectName}
@@ -924,7 +937,11 @@ export function App() {
       )}
 
       {/* Main Content Area */}
-      <main className={`flex-1 flex flex-col w-full max-w-7xl mx-auto px-2 py-1 sm:px-3 sm:py-2 md:px-4 md:py-2.5 ${videoUrl ? 'overflow-hidden min-h-0' : 'overflow-y-auto pb-8'}`}>
+      <main
+        className={`flex-1 flex flex-col w-full max-w-7xl mx-auto px-3 sm:px-4 md:px-6 py-4 sm:py-6 md:py-8 ${
+          videoUrl ? 'overflow-hidden min-h-0' : 'pb-16'
+        }`}
+      >
         {!videoUrl ? (
           /* Landing & Video Uploader View */
           <div className="flex-1 flex flex-col justify-center items-center py-2 sm:py-6 w-full">

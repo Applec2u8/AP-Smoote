@@ -28,27 +28,23 @@
   html,
   body {
     width: 100%;
-    height: 100%;
-    height: 100dvh;
+    min-height: 100%;
     margin: 0;
     padding: 0;
     background-color: #08090d;
     color: #e2e8f0;
     overflow-x: hidden;
-    overflow-y: hidden;
-    overscroll-behavior-y: none;
+    overflow-y: auto;
     -webkit-tap-highlight-color: transparent;
   }
 
   #root {
     width: 100%;
-    height: 100%;
-    height: 100dvh;
+    min-height: 100%;
     display: flex;
     flex-direction: column;
     margin: 0;
     padding: 0;
-    overflow: hidden;
   }
 
   /* Prevent awkward word breaking for Lao/multilingual titles */
@@ -58,20 +54,20 @@
   }
 }
 
-/* Custom Scrollbars */
+/* Native Unobtrusive Scrollbars */
 ::-webkit-scrollbar {
-  width: 5px;
-  height: 5px;
+  width: 6px;
+  height: 6px;
 }
 ::-webkit-scrollbar-track {
-  background: rgba(15, 23, 42, 0.6);
+  background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: rgba(148, 163, 184, 0.2);
+  background: rgba(255, 255, 255, 0.12);
   border-radius: 9999px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(148, 163, 184, 0.4);
+  background: rgba(255, 255, 255, 0.28);
 }
 
 /* Glassmorphism utility */

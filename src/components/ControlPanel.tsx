@@ -406,7 +406,13 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
                     playbackSpeed: parseFloat(e.target.value),
                   }))
                 }
-                className="w-full accent-cyan-400 bg-slate-800 rounded-lg cursor-pointer h-2"
+                onInput={(e) =>
+                  updateActiveSmooth((prev) => ({
+                    ...prev,
+                    playbackSpeed: parseFloat((e.target as HTMLInputElement).value),
+                  }))
+                }
+                className="w-full accent-cyan-400 bg-slate-800 rounded-lg cursor-pointer h-2 touch-none"
               />
 
               {/* Quick speed buttons */}
@@ -469,7 +475,13 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
                     intensity: Number(e.target.value),
                   }))
                 }
-                className="w-full accent-violet-500 bg-slate-800 rounded-lg cursor-pointer h-2"
+                onInput={(e) =>
+                  updateActiveSmooth((prev) => ({
+                    ...prev,
+                    intensity: Number((e.target as HTMLInputElement).value),
+                  }))
+                }
+                className="w-full accent-violet-500 bg-slate-800 rounded-lg cursor-pointer h-2 touch-none"
               />
             </div>
 
@@ -560,7 +572,13 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
                           blendDecay: parseFloat(e.target.value),
                         }))
                       }
-                      className="w-full accent-violet-500 bg-slate-800 rounded-lg cursor-pointer h-1.5"
+                      onInput={(e) =>
+                        updateActiveSmooth((prev) => ({
+                          ...prev,
+                          blendDecay: parseFloat((e.target as HTMLInputElement).value),
+                        }))
+                      }
+                      className="w-full accent-violet-500 bg-slate-800 rounded-lg cursor-pointer h-1.5 touch-none"
                     />
                   </div>
 
@@ -581,7 +599,13 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
                           frameSamples: parseInt(e.target.value, 10),
                         }))
                       }
-                      className="w-full accent-violet-500 bg-slate-800 rounded-lg cursor-pointer h-1.5"
+                      onInput={(e) =>
+                        updateActiveSmooth((prev) => ({
+                          ...prev,
+                          frameSamples: parseInt((e.target as HTMLInputElement).value, 10),
+                        }))
+                      }
+                      className="w-full accent-violet-500 bg-slate-800 rounded-lg cursor-pointer h-1.5 touch-none"
                     />
                   </div>
 
@@ -602,7 +626,13 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
                           sharpness: parseInt(e.target.value, 10),
                         }))
                       }
-                      className="w-full accent-cyan-500 bg-slate-800 rounded-lg cursor-pointer h-1.5"
+                      onInput={(e) =>
+                        updateActiveSmooth((prev) => ({
+                          ...prev,
+                          sharpness: parseInt((e.target as HTMLInputElement).value, 10),
+                        }))
+                      }
+                      className="w-full accent-cyan-500 bg-slate-800 rounded-lg cursor-pointer h-1.5 touch-none"
                     />
                   </div>
 
