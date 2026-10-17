@@ -1,51 +1,54 @@
 @import "tailwindcss";
 
+@theme {
+  --font-sans: 'Noto Sans Lao', 'Noto Sans', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Noto Sans Lao', ui-monospace, monospace;
+}
+
 @layer base {
   :root {
-    --font-sans: 'Noto Sans Lao', system-ui, -apple-system, sans-serif;
-    --font-mono: 'JetBrains Mono', monospace;
+    --font-sans: 'Noto Sans Lao', 'Noto Sans', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    --font-mono: 'JetBrains Mono', 'Noto Sans Lao', ui-monospace, monospace;
   }
 
   *,
+  *::before,
+  *::after,
   html,
   body,
   button,
   input,
   select,
   textarea {
-    font-family: 'Noto Sans Lao', system-ui, -apple-system, sans-serif;
+    font-family: 'Noto Sans Lao', 'Noto Sans', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
     line-height: 1.5;
     box-sizing: border-box;
   }
 
-  html {
-    width: 100%;
-    height: 100%;
-    margin: 0;
-    padding: 0;
-    overflow-x: hidden;
-  }
-
+  html,
   body {
     width: 100%;
-    min-height: 100%;
+    height: 100%;
+    height: 100dvh;
     margin: 0;
     padding: 0;
     background-color: #08090d;
     color: #e2e8f0;
     overflow-x: hidden;
+    overflow-y: hidden;
+    overscroll-behavior-y: none;
     -webkit-tap-highlight-color: transparent;
   }
 
   #root {
     width: 100%;
-    min-height: 100vh;
-    min-height: 100dvh;
+    height: 100%;
+    height: 100dvh;
     display: flex;
     flex-direction: column;
     margin: 0;
     padding: 0;
-    overflow-x: hidden;
+    overflow: hidden;
   }
 
   /* Prevent awkward word breaking for Lao/multilingual titles */

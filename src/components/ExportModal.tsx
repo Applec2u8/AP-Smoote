@@ -121,6 +121,22 @@ export const ExportModal: React.FC<ExportModalProps> = ({
     onClose()
   }
 
+  // Close on ESC key
+  useEffect(() => {
+    if (!isOpen) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        if (showCancelConfirm) {
+          setShowCancelConfirm(false)
+        } else {
+          handleClose()
+        }
+      }
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [isOpen, showCancelConfirm, isExporting, onClose])
+
   // Calculate projected dimensions
   const dims = calculateTargetDimensions(
     metadata?.width || 1920,
@@ -222,8 +238,14 @@ export const ExportModal: React.FC<ExportModalProps> = ({
   if (!isOpen) return null
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in">
-      <div className="relative w-full max-w-xl bg-[#0f121d] border border-white/[0.1] rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in cursor-pointer"
+      onClick={handleClose}
+    >
+      <div
+        className="relative w-full max-w-xl bg-[#0f121d] border border-white/[0.1] rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh] cursor-default"
+        onClick={(e) => e.stopPropagation()}
+      >
         {/* Modal Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-white/[0.08] bg-slate-900/40">
           <div className="flex items-center gap-2.5">
@@ -448,6 +470,22 @@ export const ExportModal: React.FC<ExportModalProps> = ({
                 <span>{t.targetFpsWord} {exportSettings.fps} FPS</span>
               </div>
 
+              {/* ⚠️ Critical: Do NOT close warning */}
+              <div className="w-full bg-red-950/60 border border-red-500/50 rounded-xl px-3 py-2.5 flex items-start gap-2 text-left animate-pulse">
+                <span className="text-base shrink-0 mt-0.5">🚫</span>
+                <span className="text-[11px] font-semibold text-red-300 leading-snug">
+                  {t.doNotCloseWarning}
+                </span>
+              </div>
+
+              {/* ℹ️ Device performance notice */}
+              <div className="w-full bg-slate-800/70 border border-slate-600/40 rounded-xl px-3 py-2 flex items-start gap-2 text-left">
+                <span className="text-sm shrink-0">ℹ️</span>
+                <span className="text-[10px] text-slate-400 leading-snug">
+                  {t.devicePerfNotice}
+                </span>
+              </div>
+
               <button
                 type="button"
                 onClick={handleCancelClick}
@@ -535,8 +573,14 @@ export const ExportModal: React.FC<ExportModalProps> = ({
 
         {/* Confirmation Alert Dialog for Cancel Export */}
         {showCancelConfirm && (
-          <div className="absolute inset-0 z-50 flex items-center justify-center p-5 bg-black/85 backdrop-blur-md animate-in fade-in duration-150">
-            <div className="w-full max-w-sm bg-[#131622] border border-red-500/40 rounded-2xl p-5 shadow-2xl flex flex-col items-center text-center space-y-4">
+          <div
+            className="absolute inset-0 z-50 flex items-center justify-center p-5 bg-black/85 backdrop-blur-md animate-in fade-in duration-150 cursor-pointer"
+            onClick={handleDismissCancelAlert}
+          >
+            <div
+              className="w-full max-w-sm bg-[#131622] border border-red-500/40 rounded-2xl p-5 shadow-2xl flex flex-col items-center text-center space-y-4 cursor-default"
+              onClick={(e) => e.stopPropagation()}
+            >
               <div className="w-12 h-12 rounded-full bg-red-500/20 border border-red-500/40 text-red-400 flex items-center justify-center shadow-lg shadow-red-500/20">
                 <AlertTriangle className="w-6 h-6 animate-pulse" />
               </div>

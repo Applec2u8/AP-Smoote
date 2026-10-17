@@ -46,7 +46,7 @@ interface ControlPanelProps {
   timeBlocks?: TimeBlock[]
   onTimeBlocksChange?: (blocks: TimeBlock[]) => void
   selectedBlockId?: string | null
-  onSelectBlock?: (id: string) => void
+  onSelectBlock?: (id: string | null) => void
   currentTime: number
   onSeek: (time: number) => void
   isPlaying: boolean
@@ -244,7 +244,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
       </div>
 
       {/* Main Navigation Tabs */}
-      <div className="flex items-center p-1 mt-3 bg-slate-900/90 rounded-xl border border-white/10 gap-1 text-xs">
+      <div className="hidden lg:flex items-center p-1 mt-3 bg-slate-900/90 rounded-xl border border-white/10 gap-1 text-xs">
         {/* Tab 1: Trim & Cut */}
         <button
           onClick={() => handleTabSwitch('trim')}
@@ -674,12 +674,12 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
                     </span>
                   </div>
 
-                  <div className="grid grid-cols-2 gap-2 text-[11px] pt-0.5 font-mono">
+                  <div className="grid grid-cols-2 gap-2 text-[11px] pt-0.5">
                     <div>
-                      <span className="text-slate-500">{t.metaResolution}</span> {metadata.width}×{metadata.height}
+                      <span className="text-slate-500">{t.metaResolution}</span> <span className="font-mono text-slate-300">{metadata.width}×{metadata.height}</span>
                     </div>
                     <div>
-                      <span className="text-slate-500">{t.metaDuration}</span> {metadata.duration.toFixed(1)} {t.seconds}
+                      <span className="text-slate-500">{t.metaDuration}</span> <span className="font-mono text-slate-300">{metadata.duration.toFixed(1)}</span> {t.seconds}
                     </div>
                     {currentSmooth.playbackSpeed && currentSmooth.playbackSpeed < 1.0 && (
                       <div className="col-span-2 text-cyan-400/90 text-[10px]">
@@ -690,54 +690,54 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
                 </div>
               )
             })()}
+
+            {/* Action Buttons inside Export Tab */}
+            <div className="pt-2 space-y-2.5">
+              {/* Primary Export Button */}
+              {(() => {
+                const exportPlan = createExportPlan(
+                  metadata?.duration || 0,
+                  currentSmooth,
+                  60,
+                  timeBlocks,
+                  trimRange,
+                  currentTransform
+                )
+                return (
+                  <button
+                    onClick={onOpenExport}
+                    className="w-full inline-flex items-center justify-center gap-2 py-3 px-4 rounded-xl bg-gradient-to-r from-violet-600 via-indigo-600 to-cyan-500 hover:from-violet-500 hover:via-indigo-500 hover:to-cyan-400 text-white font-bold text-sm shadow-lg shadow-violet-600/30 hover:shadow-violet-600/50 transition-all cursor-pointer transform hover:-translate-y-0.5 active:translate-y-0 min-h-[44px] touch-manipulation"
+                  >
+                    <Download className="w-4 h-4" />
+                    <span>
+                      {t.exportCtaBtn}
+                      {metadata && metadata.duration > 0 && ` (${formatDuration(exportPlan.totalOutputDuration)})`}
+                    </span>
+                  </button>
+                )
+              })()}
+
+              {/* Save Metadata to Supabase */}
+              <div className="flex items-center justify-between gap-2">
+                <button
+                  onClick={onSaveProject}
+                  disabled={isSaving}
+                  className="flex-1 inline-flex items-center justify-center gap-1.5 py-2 px-3 rounded-xl bg-slate-800/80 hover:bg-slate-700/80 text-slate-200 text-xs font-semibold border border-white/10 transition-colors disabled:opacity-50 cursor-pointer min-h-[40px] touch-manipulation"
+                  title={t.saveMetaBtn}
+                >
+                  <Save className="w-3.5 h-3.5 text-indigo-400" />
+                  <span>{isSaving ? t.savingBtn : t.saveMetaBtn}</span>
+                </button>
+              </div>
+
+              {lastSavedAt && (
+                <p className="text-[10px] text-center text-slate-500">
+                  {t.lastSavedAt} {lastSavedAt}
+                </p>
+              )}
+            </div>
           </div>
         )}
-      </div>
-
-      {/* Bottom Action Footer */}
-      <div className="pt-3 border-t border-white/[0.08] space-y-2.5">
-        {/* Save Metadata to Supabase */}
-        <div className="flex items-center justify-between gap-2">
-          <button
-            onClick={onSaveProject}
-            disabled={isSaving}
-            className="flex-1 inline-flex items-center justify-center gap-1.5 py-2 px-3 rounded-xl bg-slate-800/80 hover:bg-slate-700/80 text-slate-200 text-xs font-semibold border border-white/10 transition-colors disabled:opacity-50 cursor-pointer min-h-[40px] touch-manipulation"
-            title={t.saveMetaBtn}
-          >
-            <Save className="w-3.5 h-3.5 text-indigo-400" />
-            <span>{isSaving ? t.savingBtn : t.saveMetaBtn}</span>
-          </button>
-        </div>
-
-        {lastSavedAt && (
-          <p className="text-[10px] text-center text-slate-500">
-            {t.lastSavedAt} {lastSavedAt}
-          </p>
-        )}
-
-        {/* Primary Export Button */}
-        {(() => {
-          const exportPlan = createExportPlan(
-            metadata?.duration || 0,
-            currentSmooth,
-            60,
-            timeBlocks,
-            trimRange,
-            currentTransform
-          )
-          return (
-            <button
-              onClick={onOpenExport}
-              className="w-full inline-flex items-center justify-center gap-2 py-3 px-4 rounded-xl bg-gradient-to-r from-violet-600 via-indigo-600 to-cyan-500 hover:from-violet-500 hover:via-indigo-500 hover:to-cyan-400 text-white font-bold text-sm shadow-lg shadow-violet-600/30 hover:shadow-violet-600/50 transition-all cursor-pointer transform hover:-translate-y-0.5 active:translate-y-0 min-h-[44px] touch-manipulation"
-            >
-              <Download className="w-4 h-4" />
-              <span>
-                {t.exportCtaBtn}
-                {metadata && metadata.duration > 0 && ` (${formatDuration(exportPlan.totalOutputDuration)})`}
-              </span>
-            </button>
-          )
-        })()}
       </div>
     </div>
   )

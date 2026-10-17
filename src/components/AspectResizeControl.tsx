@@ -237,7 +237,7 @@ export const AspectResizeControl: React.FC<AspectResizeControlProps> = ({
         <div className="flex items-center justify-between text-xs font-semibold text-slate-300">
           <span className="flex items-center gap-1.5">
             <Move className="w-3.5 h-3.5 text-amber-400" />
-            <span>ตำแหน่งภาพ (Pan & Position):</span>
+            <span>{t.panPositionTitle}</span>
           </span>
           <button
             onClick={() => handlePanChange(0, 0)}
@@ -245,15 +245,15 @@ export const AspectResizeControl: React.FC<AspectResizeControlProps> = ({
             title="Center Position"
           >
             <AlignCenter className="w-3 h-3" />
-            <span>ກາງຈໍ (Center)</span>
+            <span>{t.centerPosition}</span>
           </button>
         </div>
 
         {/* Pan X Slider */}
         <div className="space-y-1">
-          <div className="flex items-center justify-between text-[11px] text-slate-400 font-mono">
-            <span>ແກນ X (ຊ້າຍ-ຂວາ):</span>
-            <span className="text-slate-200">{settings.panX || 0}%</span>
+          <div className="flex items-center justify-between text-[11px] text-slate-400">
+            <span>{t.panAxisX}</span>
+            <span className="text-slate-200 font-mono">{settings.panX || 0}%</span>
           </div>
           <input
             type="range"
@@ -268,9 +268,9 @@ export const AspectResizeControl: React.FC<AspectResizeControlProps> = ({
 
         {/* Pan Y Slider */}
         <div className="space-y-1">
-          <div className="flex items-center justify-between text-[11px] text-slate-400 font-mono">
-            <span>ແກນ Y (ເທິງ-ລຸ່ມ):</span>
-            <span className="text-slate-200">{settings.panY || 0}%</span>
+          <div className="flex items-center justify-between text-[11px] text-slate-400">
+            <span>{t.panAxisY}</span>
+            <span className="text-slate-200 font-mono">{settings.panY || 0}%</span>
           </div>
           <input
             type="range"

@@ -569,7 +569,7 @@ export function App() {
   }
 
   return (
-    <div className="min-h-screen flex flex-col bg-[#08090e] text-slate-100 selection:bg-violet-600/30 selection:text-violet-200 overflow-x-hidden">
+    <div className={`h-full h-[100dvh] max-h-[100dvh] flex flex-col bg-[#08090e] text-slate-100 selection:bg-violet-600/30 selection:text-violet-200 overflow-hidden`}>
       {/* Top Navbar with Undo & Redo buttons */}
       <Navbar
         projectName={projectName}
@@ -605,7 +605,7 @@ export function App() {
       )}
 
       {/* Main Content Area */}
-      <main className="flex-1 flex flex-col w-full max-w-7xl mx-auto px-2 py-2 sm:px-4 sm:py-4 md:px-6 md:py-6">
+      <main className={`flex-1 flex flex-col w-full max-w-7xl mx-auto px-2 py-1 sm:px-3 sm:py-2 md:px-4 md:py-2.5 overflow-hidden min-h-0`}>
         {!videoUrl ? (
           /* Landing & Video Uploader View */
           <div className="flex-1 flex flex-col justify-center items-center py-2 sm:py-6 w-full">
@@ -671,7 +671,7 @@ export function App() {
           </div>
         ) : (
           /* Editor Workspace */
-          <div className="flex-1 flex flex-col gap-2 sm:gap-3 w-full max-w-full pb-20 lg:pb-0">
+          <div className="flex-1 overflow-hidden flex flex-col gap-1.5 sm:gap-2 w-full max-w-full pb-14 lg:pb-0 min-h-0">
             {/* Top Workspace Bar */}
             <div className="flex items-center justify-between gap-2 pb-1 flex-wrap">
               <div className="flex items-center gap-2 sm:gap-3 min-w-0">
@@ -748,13 +748,10 @@ export function App() {
               </div>
             </div>
 
-            {/* Split Editor Grid:
-                On Mobile: Sticky Top Video Player + Scrollable Settings Panel
-                On Desktop: Dual column layout (Left: VideoPreview, Right: ControlPanel)
-            */}
-            <div className="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-3 lg:gap-5 w-full max-w-full">
-              {/* Video Player Column — Sticky on Mobile & Desktop */}
-              <div className="lg:col-span-7 xl:col-span-8 flex flex-col gap-2 sticky top-0 z-30 bg-[#08090e]/95 backdrop-blur-md pt-1 pb-2 lg:py-0 lg:self-start max-w-full overflow-hidden">
+            {/* Split Editor Grid */}
+            <div className="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-2 lg:gap-4 w-full max-w-full overflow-hidden min-h-0">
+              {/* Video Player Column */}
+              <div className="lg:col-span-7 xl:col-span-8 flex flex-col gap-1 z-30 bg-[#08090e]/95 backdrop-blur-md pt-0.5 pb-1 lg:py-0 max-w-full overflow-hidden shrink-0 max-h-[45vh] sm:max-h-[50vh] lg:max-h-full">
                 <VideoPreview
                   videoUrl={videoUrl}
                   metadata={metadata}
@@ -790,7 +787,7 @@ export function App() {
               </div>
 
               {/* Control Panel Column with Per-Cut settings */}
-              <div className="lg:col-span-5 xl:col-span-4 flex flex-col max-w-full overflow-hidden">
+              <div className="flex-1 lg:col-span-5 xl:col-span-4 flex flex-col max-w-full overflow-hidden min-h-0">
                 <ControlPanel
                   settings={smoothSettings}
                   setSettings={handleSmoothSettingsChange}

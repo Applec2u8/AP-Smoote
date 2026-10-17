@@ -73,9 +73,26 @@ export const VideoPreview: React.FC<VideoPreviewProps> = ({
   lang,
 }) => {
   const t = translations[lang]
-  const videoRef = useRef<HTMLVideoElement>(null)
+  const videoARef = useRef<HTMLVideoElement>(null)
+  const videoBRef = useRef<HTMLVideoElement>(null)
+  const [activeVideoKey, setActiveVideoKey] = useState<'A' | 'B'>('A')
+  const activeVideoKeyRef = useRef<'A' | 'B'>('A')
+
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
+
+  // Buffer canvas to hold the last valid rendered frame during seeks/buffering (prevents black screen)
+  const lastValidFrameCanvasRef = useRef<HTMLCanvasElement | null>(null)
+  const pendingSeekTimeRef = useRef<number | null>(null)
+  const preloadedClipIndexRef = useRef<number>(-1)
+
+  const getActiveVideo = useCallback((): HTMLVideoElement | null => {
+    return activeVideoKeyRef.current === 'A' ? videoARef.current : videoBRef.current
+  }, [])
+
+  const getStandbyVideo = useCallback((): HTMLVideoElement | null => {
+    return activeVideoKeyRef.current === 'A' ? videoBRef.current : videoARef.current
+  }, [])
 
   const [isPlaying, setIsPlaying] = useState(false)
   const [currentTime, setCurrentTime] = useState(0)
@@ -102,6 +119,9 @@ export const VideoPreview: React.FC<VideoPreviewProps> = ({
   // History canvases for frame blending buffer
   const historyCanvasesRef = useRef<HTMLCanvasElement[]>([])
 
+  // Active independent clip index for sequential multi-segment playback
+  const activeClipIndexRef = useRef<number>(0)
+
   // Initialize history canvases
   useEffect(() => {
     const list: HTMLCanvasElement[] = []
@@ -114,7 +134,7 @@ export const VideoPreview: React.FC<VideoPreviewProps> = ({
 
   // Sync canvas size with video resolution & transform aspect ratio
   const updateCanvasDimensions = useCallback(() => {
-    const video = videoRef.current
+    const video = getActiveVideo() || videoARef.current || videoBRef.current
     const canvas = canvasRef.current
     if (!video || !canvas || !video.videoWidth) return
 
@@ -128,15 +148,54 @@ export const VideoPreview: React.FC<VideoPreviewProps> = ({
     canvas.width = dims.width
     canvas.height = dims.height
 
+    if (lastValidFrameCanvasRef.current) {
+      lastValidFrameCanvasRef.current.width = dims.width
+      lastValidFrameCanvasRef.current.height = dims.height
+    }
+
     historyCanvasesRef.current.forEach((c) => {
       c.width = dims.width
       c.height = dims.height
     })
-  }, [transformSettings.aspectRatio])
+  }, [getActiveVideo, transformSettings.aspectRatio])
+
+  // Preload standby video buffer for the target clip (Zero-latency transition preparation)
+  const preloadStandbyVideoForClip = useCallback(
+    (clipIndex: number) => {
+      if (!timeBlocks || clipIndex >= timeBlocks.length || clipIndex < 0) return
+      const standbyVideo = getStandbyVideo()
+      if (!standbyVideo) return
+
+      const nextClip = timeBlocks[clipIndex]
+      if (
+        preloadedClipIndexRef.current === clipIndex &&
+        Math.abs(standbyVideo.currentTime - nextClip.start) < 0.1
+      ) {
+        return // Already preloaded at this exact time
+      }
+
+      preloadedClipIndexRef.current = clipIndex
+      standbyVideo.muted = true
+      standbyVideo.playbackRate =
+        nextClip.smoothSettings?.playbackSpeed || smoothSettings.playbackSpeed || 1.0
+
+      if ('fastSeek' in standbyVideo && typeof (standbyVideo as any).fastSeek === 'function') {
+        try {
+          ;(standbyVideo as any).fastSeek(nextClip.start)
+        } catch {
+          standbyVideo.currentTime = nextClip.start
+        }
+      } else {
+        standbyVideo.currentTime = nextClip.start
+      }
+      standbyVideo.pause()
+    },
+    [timeBlocks, getStandbyVideo, smoothSettings.playbackSpeed]
+  )
 
   // Handle Video Metadata loaded
   const handleLoadedMetadata = () => {
-    const video = videoRef.current
+    const video = getActiveVideo() || videoARef.current
     if (!video) return
 
     const dur = video.duration || 0
@@ -161,6 +220,10 @@ export const VideoPreview: React.FC<VideoPreviewProps> = ({
         aspectRatio: video.videoWidth / video.videoHeight,
       })
     }
+
+    if (timeBlocks && timeBlocks.length > 1) {
+      preloadStandbyVideoForClip(1)
+    }
   }
 
   // Update canvas dimensions when aspect ratio changes
@@ -168,19 +231,85 @@ export const VideoPreview: React.FC<VideoPreviewProps> = ({
     updateCanvasDimensions()
   }, [updateCanvasDimensions, transformSettings.aspectRatio])
 
-  // Sync playback rate whenever smoothSettings.playbackSpeed changes
+  // Sync playback rate to both video elements whenever smoothSettings.playbackSpeed changes
   useEffect(() => {
-    if (videoRef.current) {
-      videoRef.current.playbackRate = smoothSettings.playbackSpeed || 1.0
-    }
+    const rate = smoothSettings.playbackSpeed || 1.0
+    if (videoARef.current) videoARef.current.playbackRate = rate
+    if (videoBRef.current) videoBRef.current.playbackRate = rate
   }, [smoothSettings.playbackSpeed])
+
+  // Perform seek on the active video safely with fastSeek & queueing
+  const performVideoSeek = useCallback(
+    (targetTime: number) => {
+      const activeVideo = getActiveVideo()
+      if (!activeVideo) return
+
+      if (activeVideo.seeking) {
+        pendingSeekTimeRef.current = targetTime
+        return
+      }
+
+      if ('fastSeek' in activeVideo && typeof (activeVideo as any).fastSeek === 'function') {
+        try {
+          ;(activeVideo as any).fastSeek(targetTime)
+        } catch {
+          activeVideo.currentTime = targetTime
+        }
+      } else {
+        activeVideo.currentTime = targetTime
+      }
+    },
+    [getActiveVideo]
+  )
+
+  // Handle seeked event on video element: dispatch queued seeks & refresh history buffers
+  const handleVideoSeeked = useCallback(() => {
+    const activeVideo = getActiveVideo()
+    if (!activeVideo) return
+
+    if (pendingSeekTimeRef.current !== null) {
+      const nextTime = pendingSeekTimeRef.current
+      pendingSeekTimeRef.current = null
+      performVideoSeek(nextTime)
+      return
+    }
+
+    // Refresh history canvases so motion blur doesn't blend black frames from seek
+    if (historyCanvasesRef.current.length > 0 && activeVideo.videoWidth) {
+      const w = canvasRef.current?.width || activeVideo.videoWidth || 1920
+      const h = canvasRef.current?.height || activeVideo.videoHeight || 1080
+      const curBlock =
+        timeBlocks && timeBlocks.length > 0
+          ? timeBlocks[activeClipIndexRef.current] || timeBlocks[0]
+          : null
+      const activeTrans = curBlock?.transformSettings || transformSettings
+      const rect = calculateTransformRect(
+        activeVideo.videoWidth || w,
+        activeVideo.videoHeight || h,
+        w,
+        h,
+        activeTrans.fitMode,
+        activeTrans.zoom,
+        activeTrans.panX,
+        activeTrans.panY
+      )
+      historyCanvasesRef.current.forEach((c) => {
+        const cCtx = c.getContext('2d')
+        if (cCtx) {
+          cCtx.fillStyle = '#000000'
+          cCtx.fillRect(0, 0, w, h)
+          try {
+            cCtx.drawImage(activeVideo, rect.dx, rect.dy, rect.dw, rect.dh)
+          } catch {}
+        }
+      })
+    }
+  }, [getActiveVideo, performVideoSeek, timeBlocks, transformSettings])
 
   // External seek trigger
   useEffect(() => {
-    if (seekTime !== undefined && seekTime !== null && videoRef.current) {
-      videoRef.current.currentTime = seekTime
-      setCurrentTime(seekTime)
-      onCurrentTimeChange?.(seekTime)
+    if (seekTime !== undefined && seekTime !== null) {
+      handleSeek(seekTime)
     }
   }, [seekTime])
 
@@ -191,42 +320,20 @@ export const VideoPreview: React.FC<VideoPreviewProps> = ({
     }
   }, [togglePlayTrigger])
 
-  // Enforce trim range and multi-segment loop on time update
+  // Handle video timeupdate
   const handleTimeUpdate = () => {
-    const video = videoRef.current
+    const video = getActiveVideo()
     if (!video) return
     const cur = video.currentTime
     setCurrentTime(cur)
     onCurrentTimeChange?.(cur)
 
     if (timeBlocks && timeBlocks.length > 0) {
-      const inBlock = timeBlocks.find((b) => cur >= b.start && cur < b.end)
-      if (!inBlock) {
-        // Playhead is in a cut out gap or outside
-        const nextBlock = timeBlocks.find((b) => b.start >= cur)
-        if (nextBlock) {
-          video.currentTime = nextBlock.start
-        } else {
-          // Reached end of all active blocks
-          if (isLooping) {
-            video.currentTime = timeBlocks[0].start
-          } else {
-            video.pause()
-            setIsPlaying(false)
-            onIsPlayingChange?.(false)
-          }
-        }
-      }
-    } else if (trimRange.end > 0) {
-      if (cur < trimRange.start) {
-        video.currentTime = trimRange.start
-      } else if (cur >= trimRange.end) {
-        if (isLooping) {
-          video.currentTime = trimRange.start
-        } else {
-          video.pause()
-          setIsPlaying(false)
-          onIsPlayingChange?.(false)
+      const idx = timeBlocks.findIndex((b) => cur >= b.start && cur < b.end)
+      if (idx !== -1 && idx !== activeClipIndexRef.current) {
+        activeClipIndexRef.current = idx
+        if (idx + 1 < timeBlocks.length) {
+          preloadStandbyVideoForClip(idx + 1)
         }
       }
     }
@@ -235,15 +342,28 @@ export const VideoPreview: React.FC<VideoPreviewProps> = ({
   // Main Render Loop (runs continuously via requestAnimationFrame)
   useEffect(() => {
     let animId: number
-    const video = videoRef.current
-    const canvas = canvasRef.current
 
     const render = () => {
-      if (video && canvas && video.readyState >= 2) {
+      const activeVideo = getActiveVideo()
+      const canvas = canvasRef.current
+
+      if (activeVideo && canvas) {
         const ctx = canvas.getContext('2d')
         if (ctx) {
           const w = canvas.width
           const h = canvas.height
+
+          // Initialize lastValidFrame buffer if needed
+          if (!lastValidFrameCanvasRef.current) {
+            lastValidFrameCanvasRef.current = document.createElement('canvas')
+          }
+          if (
+            lastValidFrameCanvasRef.current.width !== w ||
+            lastValidFrameCanvasRef.current.height !== h
+          ) {
+            lastValidFrameCanvasRef.current.width = w
+            lastValidFrameCanvasRef.current.height = h
+          }
 
           // FPS measurement
           frameCountRef.current++
@@ -257,29 +377,112 @@ export const VideoPreview: React.FC<VideoPreviewProps> = ({
             lastFpsTimeRef.current = now
           }
 
-          // Find current block for per-cut settings
-          const curTime = video.currentTime
-          const curBlock = timeBlocks?.find((b) => curTime >= b.start && curTime <= b.end)
+          // Frame-accurate seamless sequential playback across cuts with ZERO LATENCY
+          if (!activeVideo.paused && !activeVideo.ended && timeBlocks && timeBlocks.length > 0) {
+            const curIdx = activeClipIndexRef.current
+            const curClip = timeBlocks[curIdx] || timeBlocks[0]
+
+            if (curClip && activeVideo.currentTime >= curClip.end - 0.04) {
+              if (curIdx + 1 < timeBlocks.length) {
+                const nextIdx = curIdx + 1
+                const nextClip = timeBlocks[nextIdx]
+                const standbyVideo = getStandbyVideo()
+
+                // Check if preloaded standby buffer is ready for instant switch
+                if (standbyVideo && standbyVideo.readyState >= 2) {
+                  standbyVideo.muted = isMuted
+                  standbyVideo.playbackRate =
+                    nextClip.smoothSettings?.playbackSpeed || smoothSettings.playbackSpeed || 1.0
+
+                  standbyVideo.play().catch(console.warn)
+
+                  activeVideo.pause()
+                  activeVideo.muted = true
+
+                  // Instant zero-latency switch
+                  const newKey = activeVideoKeyRef.current === 'A' ? 'B' : 'A'
+                  activeVideoKeyRef.current = newKey
+                  setActiveVideoKey(newKey)
+                  activeClipIndexRef.current = nextIdx
+                  setCurrentTime(nextClip.start)
+                  onCurrentTimeChange?.(nextClip.start)
+
+                  // Preload the following cut on the newly freed standby video!
+                  if (nextIdx + 1 < timeBlocks.length) {
+                    preloadStandbyVideoForClip(nextIdx + 1)
+                  }
+                } else {
+                  // Direct seek fallback
+                  activeVideo.currentTime = nextClip.start
+                  activeClipIndexRef.current = nextIdx
+                  setCurrentTime(nextClip.start)
+                  onCurrentTimeChange?.(nextClip.start)
+                }
+              } else {
+                // Sequence completed
+                activeVideo.pause()
+                const standby = getStandbyVideo()
+                if (standby) standby.pause()
+                setIsPlaying(false)
+                onIsPlayingChange?.(false)
+                activeClipIndexRef.current = 0
+                activeVideo.currentTime = timeBlocks[0].start
+                setCurrentTime(timeBlocks[0].start)
+                onCurrentTimeChange?.(timeBlocks[0].start)
+                if (timeBlocks.length > 1) {
+                  preloadStandbyVideoForClip(1)
+                }
+              }
+            } else if (curClip && activeVideo.currentTime < curClip.start - 0.1) {
+              activeVideo.currentTime = curClip.start
+            }
+          }
+
+          // Find current independent clip for per-cut settings
+          const curBlock =
+            timeBlocks && timeBlocks.length > 0
+              ? timeBlocks[activeClipIndexRef.current] || timeBlocks[0]
+              : null
           const activeSmooth = curBlock?.smoothSettings || smoothSettings
           const activeTransform = curBlock?.transformSettings || transformSettings
 
-          // If video is playing or seeked, update history canvas buffer
-          if (!video.paused && !video.ended) {
-            const list = historyCanvasesRef.current
-            // Shift history
-            for (let i = list.length - 1; i > 0; i--) {
-              const destCtx = list[i].getContext('2d')
-              if (destCtx) {
-                destCtx.clearRect(0, 0, w, h)
-                destCtx.drawImage(list[i - 1], 0, 0)
+          const canDrawVideo = activeVideo.readyState >= 2 && !activeVideo.seeking
+
+          if (canDrawVideo) {
+            // Update history canvases only when actively playing valid frames
+            if (!activeVideo.paused && !activeVideo.ended) {
+              const list = historyCanvasesRef.current
+              for (let i = list.length - 1; i > 0; i--) {
+                const destCtx = list[i].getContext('2d')
+                if (destCtx) {
+                  destCtx.clearRect(0, 0, w, h)
+                  destCtx.drawImage(list[i - 1], 0, 0)
+                }
+              }
+              const firstCtx = list[0]?.getContext('2d')
+              if (firstCtx) {
+                const rect = calculateTransformRect(
+                  activeVideo.videoWidth || w,
+                  activeVideo.videoHeight || h,
+                  w,
+                  h,
+                  activeTransform.fitMode,
+                  activeTransform.zoom,
+                  activeTransform.panX,
+                  activeTransform.panY
+                )
+                firstCtx.fillStyle = '#000000'
+                firstCtx.fillRect(0, 0, w, h)
+                firstCtx.drawImage(activeVideo, rect.dx, rect.dy, rect.dw, rect.dh)
               }
             }
-            // Put current transformed frame in history[0]
-            const firstCtx = list[0].getContext('2d')
-            if (firstCtx) {
+
+            ctx.clearRect(0, 0, w, h)
+
+            if (viewMode === 'original') {
               const rect = calculateTransformRect(
-                video.videoWidth || w,
-                video.videoHeight || h,
+                activeVideo.videoWidth || w,
+                activeVideo.videoHeight || h,
                 w,
                 h,
                 activeTransform.fitMode,
@@ -287,115 +490,134 @@ export const VideoPreview: React.FC<VideoPreviewProps> = ({
                 activeTransform.panX,
                 activeTransform.panY
               )
-              firstCtx.fillStyle = '#000000'
-              firstCtx.fillRect(0, 0, w, h)
-              firstCtx.drawImage(video, rect.dx, rect.dy, rect.dw, rect.dh)
+              ctx.fillStyle = '#000000'
+              ctx.fillRect(0, 0, w, h)
+              ctx.filter = 'none'
+              ctx.globalAlpha = 1.0
+              ctx.drawImage(activeVideo, rect.dx, rect.dy, rect.dw, rect.dh)
+            } else if (viewMode === 'smoothed') {
+              applyFrameEffects(
+                ctx,
+                activeVideo,
+                w,
+                h,
+                activeSmooth,
+                historyCanvasesRef.current,
+                activeTransform
+              )
+            } else if (viewMode === 'split') {
+              const splitX = Math.round((splitPosition / 100) * w)
+              applyFrameEffects(
+                ctx,
+                activeVideo,
+                w,
+                h,
+                activeSmooth,
+                historyCanvasesRef.current,
+                activeTransform
+              )
+
+              ctx.save()
+              ctx.beginPath()
+              ctx.rect(0, 0, splitX, h)
+              ctx.clip()
+              ctx.fillStyle = '#000000'
+              ctx.fillRect(0, 0, splitX, h)
+              ctx.filter = 'none'
+              ctx.globalAlpha = 1.0
+              const rect = calculateTransformRect(
+                activeVideo.videoWidth || w,
+                activeVideo.videoHeight || h,
+                w,
+                h,
+                activeTransform.fitMode,
+                activeTransform.zoom,
+                activeTransform.panX,
+                activeTransform.panY
+              )
+              ctx.drawImage(activeVideo, rect.dx, rect.dy, rect.dw, rect.dh)
+              ctx.restore()
+
+              ctx.beginPath()
+              ctx.moveTo(splitX, 0)
+              ctx.lineTo(splitX, h)
+              ctx.strokeStyle = '#a855f7'
+              ctx.lineWidth = 3
+              ctx.shadowColor = '#c084fc'
+              ctx.shadowBlur = 10
+              ctx.stroke()
+              ctx.shadowBlur = 0
             }
-          }
 
-          // Render output based on view mode
-          ctx.clearRect(0, 0, w, h)
-
-          if (viewMode === 'original') {
-            // Raw frame only with transform
-            const rect = calculateTransformRect(
-              video.videoWidth || w,
-              video.videoHeight || h,
-              w,
-              h,
-              activeTransform.fitMode,
-              activeTransform.zoom,
-              activeTransform.panX,
-              activeTransform.panY
-            )
-            ctx.fillStyle = '#000000'
-            ctx.fillRect(0, 0, w, h)
-            ctx.filter = 'none'
-            ctx.globalAlpha = 1.0
-            ctx.drawImage(video, rect.dx, rect.dy, rect.dw, rect.dh)
-          } else if (viewMode === 'smoothed') {
-            // Full smoothed frame with per-cut settings
-            applyFrameEffects(
-              ctx,
-              video,
-              w,
-              h,
-              activeSmooth,
-              historyCanvasesRef.current,
-              activeTransform
-            )
-          } else if (viewMode === 'split') {
-            // Split-screen comparison: Left = Original, Right = Smoothed
-            const splitX = Math.round((splitPosition / 100) * w)
-
-            // 1. Draw smoothed on whole canvas
-            applyFrameEffects(
-              ctx,
-              video,
-              w,
-              h,
-              activeSmooth,
-              historyCanvasesRef.current,
-              activeTransform
-            )
-
-            // 2. Draw raw video on left side using clipping
-            ctx.save()
-            ctx.beginPath()
-            ctx.rect(0, 0, splitX, h)
-            ctx.clip()
-            ctx.fillStyle = '#000000'
-            ctx.fillRect(0, 0, splitX, h)
-            ctx.filter = 'none'
-            ctx.globalAlpha = 1.0
-            const rect = calculateTransformRect(
-              video.videoWidth || w,
-              video.videoHeight || h,
-              w,
-              h,
-              activeTransform.fitMode,
-              activeTransform.zoom,
-              activeTransform.panX,
-              activeTransform.panY
-            )
-            ctx.drawImage(video, rect.dx, rect.dy, rect.dw, rect.dh)
-            ctx.restore()
-
-            // 3. Draw divider line
-            ctx.beginPath()
-            ctx.moveTo(splitX, 0)
-            ctx.lineTo(splitX, h)
-            ctx.strokeStyle = '#a855f7'
-            ctx.lineWidth = 3
-            ctx.shadowColor = '#c084fc'
-            ctx.shadowBlur = 10
-            ctx.stroke()
-            ctx.shadowBlur = 0
+            // Cache valid frame into lastValidFrame buffer (Prevents black screen on seeks)
+            if (lastValidFrameCanvasRef.current) {
+              const lgCtx = lastValidFrameCanvasRef.current.getContext('2d')
+              if (lgCtx) {
+                lgCtx.clearRect(0, 0, w, h)
+                lgCtx.drawImage(canvas, 0, 0)
+              }
+            }
+          } else {
+            // HOLD LAST VALID FRAME: Never clear to black!
+            if (lastValidFrameCanvasRef.current && lastValidFrameCanvasRef.current.width > 0) {
+              ctx.clearRect(0, 0, w, h)
+              ctx.drawImage(lastValidFrameCanvasRef.current, 0, 0)
+            }
           }
         }
       }
+
       animId = requestAnimationFrame(render)
     }
 
     animId = requestAnimationFrame(render)
     return () => cancelAnimationFrame(animId)
-  }, [viewMode, splitPosition, smoothSettings, transformSettings, timeBlocks])
+  }, [
+    viewMode,
+    splitPosition,
+    smoothSettings,
+    transformSettings,
+    timeBlocks,
+    getActiveVideo,
+    getStandbyVideo,
+    preloadStandbyVideoForClip,
+    isMuted,
+  ])
 
   // Playback control handlers
   const togglePlay = () => {
-    const video = videoRef.current
-    if (!video) return
+    const activeVideo = getActiveVideo()
+    if (!activeVideo) return
 
-    if (video.paused) {
+    if (activeVideo.paused) {
       if (timeBlocks && timeBlocks.length > 0) {
-        const lastBlock = timeBlocks[timeBlocks.length - 1]
-        if (currentTime >= lastBlock.end) {
-          video.currentTime = timeBlocks[0].start
+        const lastClip = timeBlocks[timeBlocks.length - 1]
+        if (activeVideo.currentTime >= lastClip.end - 0.05) {
+          activeClipIndexRef.current = 0
+          activeVideo.currentTime = timeBlocks[0].start
+          if (timeBlocks.length > 1) {
+            preloadStandbyVideoForClip(1)
+          }
+        } else {
+          let idx = timeBlocks.findIndex(
+            (b) => activeVideo.currentTime >= b.start && activeVideo.currentTime < b.end
+          )
+          if (idx === -1) {
+            const nextIdx = timeBlocks.findIndex((b) => b.start > activeVideo.currentTime)
+            idx = nextIdx !== -1 ? nextIdx : 0
+            activeVideo.currentTime = timeBlocks[idx].start
+          }
+          activeClipIndexRef.current = idx
+          if (idx + 1 < timeBlocks.length) {
+            preloadStandbyVideoForClip(idx + 1)
+          }
         }
       } else if (currentTime >= trimRange.end && trimRange.end > 0) {
-        video.currentTime = trimRange.start
+        activeVideo.currentTime = trimRange.start
       }
-      video
+
+      activeVideo.playbackRate = smoothSettings.playbackSpeed || 1.0
+      activeVideo
         .play()
         .then(() => {
           setIsPlaying(true)
@@ -403,7 +625,9 @@ export const VideoPreview: React.FC<VideoPreviewProps> = ({
         })
         .catch(console.warn)
     } else {
-      video.pause()
+      activeVideo.pause()
+      const standby = getStandbyVideo()
+      if (standby) standby.pause()
       setIsPlaying(false)
       onIsPlayingChange?.(false)
     }
@@ -412,35 +636,58 @@ export const VideoPreview: React.FC<VideoPreviewProps> = ({
   const handleSeek = (time: number) => {
     setCurrentTime(time)
     onCurrentTimeChange?.(time)
-    if (videoRef.current) {
-      videoRef.current.currentTime = time
+
+    performVideoSeek(time)
+
+    if (timeBlocks && timeBlocks.length > 0) {
+      const idx = timeBlocks.findIndex((b) => time >= b.start && time <= b.end)
+      const currentIdx =
+        idx !== -1
+          ? idx
+          : timeBlocks.findIndex((b) => b.start > time) !== -1
+          ? timeBlocks.findIndex((b) => b.start > time)
+          : 0
+      activeClipIndexRef.current = currentIdx
+
+      if (currentIdx + 1 < timeBlocks.length) {
+        preloadStandbyVideoForClip(currentIdx + 1)
+      }
     }
   }
 
   const stepFrame = (frames: number) => {
-    if (!videoRef.current) return
+    const activeVideo = getActiveVideo()
+    if (!activeVideo) return
     const step = frames * (1 / 30)
     const target = Math.max(
       trimRange.start,
-      Math.min(trimRange.end || duration, videoRef.current.currentTime + step)
+      Math.min(trimRange.end || duration, activeVideo.currentTime + step)
     )
-    videoRef.current.currentTime = target
+    performVideoSeek(target)
+    setCurrentTime(target)
+    onCurrentTimeChange?.(target)
   }
 
   const toggleMute = () => {
-    if (!videoRef.current) return
-    videoRef.current.muted = !isMuted
-    setIsMuted(!isMuted)
+    const nextMuted = !isMuted
+    setIsMuted(nextMuted)
+    const activeVideo = getActiveVideo()
+    if (activeVideo) activeVideo.muted = nextMuted
   }
 
   const handleVolumeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const val = parseFloat(e.target.value)
     setVolume(val)
-    if (videoRef.current) {
-      videoRef.current.volume = val
-      videoRef.current.muted = val === 0
-      setIsMuted(val === 0)
+    const activeVideo = getActiveVideo()
+    if (activeVideo) {
+      activeVideo.volume = val
+      activeVideo.muted = val === 0
     }
+    const standbyVideo = getStandbyVideo()
+    if (standbyVideo) {
+      standbyVideo.volume = val
+    }
+    setIsMuted(val === 0)
   }
 
   const toggleFullscreen = () => {
@@ -609,21 +856,53 @@ export const VideoPreview: React.FC<VideoPreviewProps> = ({
   return (
     <div
       ref={containerRef}
-      className={`relative flex flex-col w-full bg-[#0b0d14] rounded-2xl border border-white/[0.08] overflow-hidden shadow-2xl transition-all ${
-        isMobileCompact ? 'p-2' : ''
-      }`}
+      className={`relative flex flex-col w-full bg-[#0b0d14] rounded-2xl border border-white/[0.08] overflow-hidden shadow-2xl transition-all ${isMobileCompact ? 'p-2' : ''
+        }`}
     >
-      {/* Hidden underlying native HTML5 video */}
+      {/* Hidden underlying native HTML5 video A */}
       <video
-        ref={videoRef}
+        ref={videoARef}
         src={videoUrl}
         loop={false}
-        muted={isMuted}
+        muted={activeVideoKey === 'A' ? isMuted : true}
         playsInline
-        onTimeUpdate={handleTimeUpdate}
+        preload="auto"
+        onTimeUpdate={() => {
+          if (activeVideoKeyRef.current === 'A') handleTimeUpdate()
+        }}
+        onSeeked={() => {
+          if (activeVideoKeyRef.current === 'A') handleVideoSeeked()
+        }}
         onLoadedMetadata={handleLoadedMetadata}
-        onPlay={() => setIsPlaying(true)}
-        onPause={() => setIsPlaying(false)}
+        onPlay={() => {
+          if (activeVideoKeyRef.current === 'A') setIsPlaying(true)
+        }}
+        onPause={() => {
+          if (activeVideoKeyRef.current === 'A') setIsPlaying(false)
+        }}
+        className="hidden"
+      />
+
+      {/* Hidden underlying native HTML5 video B for instant zero-latency ping-pong transitions */}
+      <video
+        ref={videoBRef}
+        src={videoUrl}
+        loop={false}
+        muted={activeVideoKey === 'B' ? isMuted : true}
+        playsInline
+        preload="auto"
+        onTimeUpdate={() => {
+          if (activeVideoKeyRef.current === 'B') handleTimeUpdate()
+        }}
+        onSeeked={() => {
+          if (activeVideoKeyRef.current === 'B') handleVideoSeeked()
+        }}
+        onPlay={() => {
+          if (activeVideoKeyRef.current === 'B') setIsPlaying(true)
+        }}
+        onPause={() => {
+          if (activeVideoKeyRef.current === 'B') setIsPlaying(false)
+        }}
         className="hidden"
       />
 
@@ -707,32 +986,29 @@ export const VideoPreview: React.FC<VideoPreviewProps> = ({
               <div className="flex items-center p-0.5 rounded-lg bg-black/75 border border-white/10 text-[10px] sm:text-xs shrink-0">
                 <button
                   onClick={() => setViewMode('smoothed')}
-                  className={`px-1.5 sm:px-2.5 py-0.5 sm:py-1 rounded-md font-medium transition-colors cursor-pointer whitespace-nowrap ${
-                    viewMode === 'smoothed'
-                      ? 'bg-violet-600 text-white shadow-sm'
-                      : 'text-slate-400 hover:text-slate-200'
-                  }`}
+                  className={`px-1.5 sm:px-2.5 py-0.5 sm:py-1 rounded-md font-medium transition-colors cursor-pointer whitespace-nowrap ${viewMode === 'smoothed'
+                    ? 'bg-violet-600 text-white shadow-sm'
+                    : 'text-slate-400 hover:text-slate-200'
+                    }`}
                 >
                   {t.viewSmoothed}
                 </button>
                 <button
                   onClick={() => setViewMode('split')}
-                  className={`px-1.5 sm:px-2.5 py-0.5 sm:py-1 rounded-md font-medium flex items-center gap-1 transition-colors cursor-pointer whitespace-nowrap ${
-                    viewMode === 'split'
-                      ? 'bg-violet-600 text-white shadow-sm'
-                      : 'text-slate-400 hover:text-slate-200'
-                  }`}
+                  className={`px-1.5 sm:px-2.5 py-0.5 sm:py-1 rounded-md font-medium flex items-center gap-1 transition-colors cursor-pointer whitespace-nowrap ${viewMode === 'split'
+                    ? 'bg-violet-600 text-white shadow-sm'
+                    : 'text-slate-400 hover:text-slate-200'
+                    }`}
                 >
                   <SplitSquareVertical className="w-3 h-3 shrink-0" />
                   <span className="hidden sm:inline">{t.viewSplit}</span>
                 </button>
                 <button
                   onClick={() => setViewMode('original')}
-                  className={`px-1.5 sm:px-2.5 py-0.5 sm:py-1 rounded-md font-medium transition-colors cursor-pointer whitespace-nowrap ${
-                    viewMode === 'original'
-                      ? 'bg-violet-600 text-white shadow-sm'
-                      : 'text-slate-400 hover:text-slate-200'
-                  }`}
+                  className={`px-1.5 sm:px-2.5 py-0.5 sm:py-1 rounded-md font-medium transition-colors cursor-pointer whitespace-nowrap ${viewMode === 'original'
+                    ? 'bg-violet-600 text-white shadow-sm'
+                    : 'text-slate-400 hover:text-slate-200'
+                    }`}
                 >
                   {t.viewOriginal}
                 </button>
@@ -751,13 +1027,12 @@ export const VideoPreview: React.FC<VideoPreviewProps> = ({
 
           {/* Main Video Viewport (Rendered via Canvas) */}
           <div
-            className={`relative flex-1 flex items-center justify-center p-2 sm:p-4 min-h-[220px] max-h-[36vh] sm:max-h-[46vh] lg:min-h-[380px] lg:max-h-[62vh] select-none overflow-hidden bg-black/40 touch-none ${
-              viewMode === 'split'
-                ? 'cursor-default'
-                : isCropPanTabActive
-                  ? isPanning ? 'cursor-grabbing' : 'cursor-crosshair'
-                  : 'cursor-pointer'
-            }`}
+            className={`relative flex-1 flex items-center justify-center p-1 sm:p-2 min-h-[140px] sm:min-h-[180px] lg:min-h-[300px] max-h-[30vh] sm:max-h-[40vh] lg:max-h-[60vh] select-none overflow-hidden bg-black/40 touch-none ${viewMode === 'split'
+              ? 'cursor-default'
+              : isCropPanTabActive
+                ? isPanning ? 'cursor-grabbing' : 'cursor-crosshair'
+                : 'cursor-pointer'
+              }`}
             onPointerDown={(e) => {
               // Ignore secondary pointers (multi-touch) and UI overlay clicks
               if (e.isPrimary === false) return
@@ -768,9 +1043,8 @@ export const VideoPreview: React.FC<VideoPreviewProps> = ({
           >
             <canvas
               ref={canvasRef}
-              className={`max-h-[34vh] sm:max-h-[44vh] lg:max-h-[60vh] max-w-full w-auto h-auto rounded-lg shadow-2xl object-contain ring-1 transition-shadow ${
-                isPanning ? 'ring-2 ring-amber-400 shadow-amber-500/20' : 'ring-white/10'
-              }`}
+              className={`max-h-full max-w-full w-auto h-auto rounded-lg shadow-2xl object-contain ring-1 transition-shadow ${isPanning ? 'ring-2 ring-amber-400 shadow-amber-500/20' : 'ring-white/10'
+                }`}
             />
 
             {/* Active Pan Position Badge overlay — only visible in Crop/Pan tab */}
@@ -787,7 +1061,7 @@ export const VideoPreview: React.FC<VideoPreviewProps> = ({
             {/* Crop/Pan mode hint — shown in export tab when no pan applied yet */}
             {isCropPanTabActive && !isPanning && activeTransform.panX === 0 && activeTransform.panY === 0 && (!activeTransform.zoom || activeTransform.zoom <= 1) && (
               <div className="absolute bottom-3 left-1/2 -translate-x-1/2 px-3 py-1.5 rounded-full bg-black/70 backdrop-blur-md border border-cyan-500/40 text-[10px] font-medium text-cyan-300 pointer-events-none flex items-center gap-1.5 shadow-lg z-30">
-                <span>🖐 ลากเพื่อปรับตำแหน่ง Pan</span>
+                <span>🖐 {t.panDragHint}</span>
               </div>
             )}
 
@@ -819,7 +1093,7 @@ export const VideoPreview: React.FC<VideoPreviewProps> = ({
           </div>
 
           {/* Bottom Player Controls & Integrated Interactive Trimmer */}
-          <div className="p-2 sm:p-3 bg-[#0e1018]/95 border-t border-white/[0.08] backdrop-blur-md flex flex-col gap-2 z-20">
+          <div className="p-2 sm:p-3 bg-[#0e1018]/95 border-t border-white/[0.08] backdrop-blur-md flex flex-col gap-2 z-20 shrink-0">
             {/* Interactive Timeline Trimmer Bar (optional in player) */}
             {showTrimmerInPlayer && (
               <TimelineTrimmer
@@ -890,11 +1164,10 @@ export const VideoPreview: React.FC<VideoPreviewProps> = ({
                           aspectRatio: r,
                         })
                       }
-                      className={`px-1.5 py-0.5 rounded font-mono transition-colors cursor-pointer ${
-                        transformSettings.aspectRatio === r
-                          ? 'bg-violet-600 text-white font-bold'
-                          : 'text-slate-400 hover:text-slate-200'
-                      }`}
+                      className={`px-1.5 py-0.5 rounded font-mono transition-colors cursor-pointer ${transformSettings.aspectRatio === r
+                        ? 'bg-violet-600 text-white font-bold'
+                        : 'text-slate-400 hover:text-slate-200'
+                        }`}
                     >
                       {r === 'original' ? 'Orig' : r}
                     </button>
@@ -928,11 +1201,10 @@ export const VideoPreview: React.FC<VideoPreviewProps> = ({
                 {/* Loop Toggle */}
                 <button
                   onClick={() => setIsLooping(!isLooping)}
-                  className={`p-1 rounded-lg text-xs font-medium border transition-colors cursor-pointer ${
-                    isLooping
-                      ? 'bg-violet-950/50 text-violet-300 border-violet-500/30'
-                      : 'text-slate-500 border-transparent hover:text-slate-300'
-                  }`}
+                  className={`p-1 rounded-lg text-xs font-medium border transition-colors cursor-pointer ${isLooping
+                    ? 'bg-violet-950/50 text-violet-300 border-violet-500/30'
+                    : 'text-slate-500 border-transparent hover:text-slate-300'
+                    }`}
                   title="Loop playback"
                 >
                   <RotateCcw className="w-3.5 h-3.5" />
