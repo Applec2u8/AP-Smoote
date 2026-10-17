@@ -854,7 +854,7 @@ export function App() {
   const handleClearVideo = handleNewProject
 
   return (
-    <div className={`h-full h-[100dvh] max-h-[100dvh] flex flex-col bg-[#08090e] text-slate-100 selection:bg-violet-600/30 selection:text-violet-200 overflow-hidden`}>
+    <div className={`${videoUrl ? 'h-full h-[100dvh] max-h-[100dvh] overflow-hidden' : 'min-h-[100dvh]'} flex flex-col bg-[#08090e] text-slate-100 selection:bg-violet-600/30 selection:text-violet-200`}>
       {/* Top Navbar with Undo & Redo buttons */}
       <Navbar
         projectName={projectName}
@@ -924,7 +924,7 @@ export function App() {
       )}
 
       {/* Main Content Area */}
-      <main className={`flex-1 flex flex-col w-full max-w-7xl mx-auto px-2 py-1 sm:px-3 sm:py-2 md:px-4 md:py-2.5 overflow-hidden min-h-0`}>
+      <main className={`flex-1 flex flex-col w-full max-w-7xl mx-auto px-2 py-1 sm:px-3 sm:py-2 md:px-4 md:py-2.5 ${videoUrl ? 'overflow-hidden min-h-0' : 'overflow-y-auto pb-8'}`}>
         {!videoUrl ? (
           /* Landing & Video Uploader View */
           <div className="flex-1 flex flex-col justify-center items-center py-2 sm:py-6 w-full">
