@@ -247,9 +247,240 @@ export function calculateActiveDuration(
   return Math.max(0.05, rawDuration)
 }
 
+export interface ExportSegment {
+  id: string
+  start: number
+  end: number
+  sourceDuration: number
+  speed: number
+  outputDuration: number
+  smoothSettings: SmoothSettings
+  transformSettings?: VideoTransformSettings
+}
+
+export interface ExportPlan {
+  segments: ExportSegment[]
+  totalSourceDuration: number
+  totalOutputDuration: number
+  totalFrames: number
+  targetFps: number
+  mapOutputTimeToSource: (outTimeSec: number) => {
+    sourceTime: number
+    smoothSettings: SmoothSettings
+    transformSettings?: VideoTransformSettings
+  }
+}
+
+/**
+ * Creates an exact frame-accurate export execution plan, taking into account
+ * cut blocks, trim ranges, individual/global slow motion playback speeds, and target FPS.
+ * Guarantees 100% time and speed parity with the real-time preview player.
+ */
+export function createExportPlan(
+  rawDuration: number,
+  globalSmooth: SmoothSettings,
+  targetFps: number,
+  timeBlocks?: TimeBlock[],
+  trimRange?: TrimRange,
+  globalTransform?: VideoTransformSettings
+): ExportPlan {
+  const safeDuration = Math.max(0.05, rawDuration || 1)
+  let rawBlocks: TimeBlock[] = []
+
+  if (timeBlocks && timeBlocks.length > 0) {
+    rawBlocks = timeBlocks
+      .filter((b) => b.end > b.start)
+      .map((b) => ({
+        ...b,
+        start: Math.max(0, Math.min(b.start, safeDuration)),
+        end: Math.max(0, Math.min(b.end, safeDuration)),
+      }))
+  } else if (trimRange && (trimRange.start > 0 || trimRange.end > 0)) {
+    const s = Math.max(0, Math.min(trimRange.start, safeDuration))
+    const e = Math.min(safeDuration, Math.max(s + 0.05, trimRange.end || safeDuration))
+    rawBlocks = [{ id: 'trim-single', start: s, end: e }]
+  } else {
+    rawBlocks = [{ id: 'full-video', start: 0, end: safeDuration }]
+  }
+
+  if (rawBlocks.length === 0) {
+    rawBlocks = [{ id: 'fallback', start: 0, end: safeDuration }]
+  }
+
+  const segments: ExportSegment[] = rawBlocks.map((b, idx) => {
+    const sourceDuration = Math.max(0.01, b.end - b.start)
+    const effectiveSmooth: SmoothSettings = {
+      ...globalSmooth,
+      ...(b.smoothSettings || {}),
+    }
+    const speed = Math.max(
+      0.05,
+      Math.min(2.0, effectiveSmooth.playbackSpeed || globalSmooth.playbackSpeed || 1.0)
+    )
+    const outputDuration = sourceDuration / speed
+    const effectiveTransform = b.transformSettings || globalTransform
+
+    return {
+      id: b.id || `seg-${idx}`,
+      start: b.start,
+      end: b.end,
+      sourceDuration,
+      speed,
+      outputDuration,
+      smoothSettings: effectiveSmooth,
+      transformSettings: effectiveTransform,
+    }
+  })
+
+  const totalSourceDuration = segments.reduce((sum, s) => sum + s.sourceDuration, 0)
+  const totalOutputDuration = segments.reduce((sum, s) => sum + s.outputDuration, 0)
+  const totalFrames = Math.max(1, Math.round(totalOutputDuration * targetFps))
+
+  const mapOutputTimeToSource = (outTimeSec: number) => {
+    const clampedOut = Math.max(0, Math.min(outTimeSec, totalOutputDuration))
+    let accumulatedOut = 0
+
+    for (let i = 0; i < segments.length; i++) {
+      const seg = segments[i]
+      const isLast = i === segments.length - 1
+      if (clampedOut <= accumulatedOut + seg.outputDuration || isLast) {
+        const offsetOut = clampedOut - accumulatedOut
+        const offsetSource = offsetOut * seg.speed
+        const sourceTime = Math.min(seg.end, seg.start + offsetSource)
+        return {
+          sourceTime,
+          smoothSettings: seg.smoothSettings,
+          transformSettings: seg.transformSettings,
+        }
+      }
+      accumulatedOut += seg.outputDuration
+    }
+
+    const last = segments[segments.length - 1]
+    return {
+      sourceTime: last.end,
+      smoothSettings: last.smoothSettings,
+      transformSettings: last.transformSettings,
+    }
+  }
+
+  return {
+    segments,
+    totalSourceDuration,
+    totalOutputDuration,
+    totalFrames,
+    targetFps,
+    mapOutputTimeToSource,
+  }
+}
+
+/**
+ * Format duration in seconds to a human-readable string (e.g. "4.5s" or "1m 12.3s")
+ */
+export function formatDuration(seconds: number): string {
+  const s = Math.max(0, seconds)
+  const m = Math.floor(s / 60)
+  const remSec = (s % 60).toFixed(1)
+  if (m > 0) {
+    const wholeSec = Math.floor(s % 60)
+    const dec = Math.round((s % 1) * 10)
+    return `${m}m ${wholeSec < 10 ? '0' : ''}${wholeSec}.${dec}s`
+  }
+  return `${remSec}s`
+}
+
+/**
+ * Discovers and returns the highest compatible H.264 profile for WebCodecs
+ */
+async function selectSupportedVideoCodec(
+  width: number,
+  height: number,
+  fps: number,
+  bitrate: number
+): Promise<string> {
+  const is1080pOrHigher = width >= 1920 || height >= 1080
+  const isHighFps = fps > 30
+
+  let candidateCodecs: string[]
+  if (is1080pOrHigher) {
+    if (isHighFps) {
+      candidateCodecs = [
+        'avc1.4D002A', // Main Profile, Level 4.2 (1080p @ 60fps)
+        'avc1.64002A', // High Profile, Level 4.2
+        'avc1.42002A', // Baseline Profile, Level 4.2
+        'avc1.4D0033', // Main Profile, Level 5.1 (1080p @ 120fps / 4K)
+        'avc1.640033', // High Profile, Level 5.1
+        'avc1.420033',
+        'avc1.4D0028', // Main Profile, Level 4.0
+        'avc1.640028',
+        'avc1.420028',
+        'vp09.00.10.08',
+        'vp8',
+      ]
+    } else {
+      candidateCodecs = [
+        'avc1.4D0028', // Main Profile, Level 4.0 (1080p @ 30fps)
+        'avc1.640028', // High Profile, Level 4.0
+        'avc1.420028', // Baseline Profile, Level 4.0
+        'avc1.4D002A',
+        'avc1.64002A',
+        'avc1.42002A',
+        'vp09.00.10.08',
+        'vp8',
+      ]
+    }
+  } else {
+    if (isHighFps) {
+      candidateCodecs = [
+        'avc1.420020', // Baseline Profile, Level 3.2 (720p @ 60fps)
+        'avc1.4D0020', // Main Profile, Level 3.2
+        'avc1.420028',
+        'avc1.4D0028',
+        'avc1.42E01F',
+        'vp09.00.10.08',
+        'vp8',
+      ]
+    } else {
+      candidateCodecs = [
+        'avc1.42E01F', // Baseline Profile, Level 3.1 (720p @ 30fps)
+        'avc1.42001F',
+        'avc1.4D001F',
+        'avc1.420020',
+        'avc1.4D0028',
+        'vp09.00.10.08',
+        'vp8',
+      ]
+    }
+  }
+
+  if (
+    typeof (window as any).VideoEncoder !== 'undefined' &&
+    typeof (window as any).VideoEncoder.isConfigSupported === 'function'
+  ) {
+    for (const codec of candidateCodecs) {
+      try {
+        const support = await (window as any).VideoEncoder.isConfigSupported({
+          codec,
+          width,
+          height,
+          bitrate,
+          framerate: fps,
+        })
+        if (support && support.supported) {
+          return codec
+        }
+      } catch {
+        // try next candidate
+      }
+    }
+  }
+
+  return candidateCodecs[0] || 'avc1.4D002A'
+}
+
 /**
  * Client-side video exporter producing standard MP4 (H.264/AVC) files compatible with iOS & Android.
- * Uses WebCodecs VideoEncoder + mp4-muxer with deterministic frame stepping.
+ * Uses WebCodecs VideoEncoder + mp4-muxer with deterministic frame stepping and accurate duration mapping.
  */
 export async function exportSmoothedVideo(
   videoSrc: string,
@@ -277,12 +508,15 @@ export async function exportSmoothedVideo(
     throw new Error('Invalid video duration')
   }
 
-  // Calculate Active Duration and Slow Motion across blocks or trim
-  const activeDuration = calculateActiveDuration(rawDuration, timeBlocks, trimRange)
-  const trimStart = Math.max(0, trimRange ? trimRange.start : 0)
-
-  const speed = Math.max(0.1, Math.min(1.0, smoothSettings.playbackSpeed || 1.0))
-  const targetDuration = activeDuration / speed
+  // Create frame-accurate export execution plan
+  const plan = createExportPlan(
+    rawDuration,
+    smoothSettings,
+    exportSettings.fps,
+    timeBlocks,
+    trimRange,
+    transformSettings
+  )
 
   const { width, height } = calculateTargetDimensions(
     video.videoWidth,
@@ -309,9 +543,6 @@ export async function exportSmoothedVideo(
     historyCanvases.push(c)
   }
 
-  const targetFps = exportSettings.fps
-  const totalFrames = Math.max(1, Math.floor(targetDuration * targetFps))
-
   const bitrateMap = {
     medium: 6_000_000,
     high: 12_000_000,
@@ -319,11 +550,293 @@ export async function exportSmoothedVideo(
   }
   const bitrate = bitrateMap[exportSettings.quality] || 12_000_000
 
-  // Helper for seeking and applying frame effects
-  const seekAndRender = async (sourceTime: number): Promise<void> => {
-    return new Promise((res) => {
-      const onSeeked = () => {
-        video.removeEventListener('seeked', onSeeked)
+  // Pre-prime initial frame and fill history buffers to avoid initial judder
+  const initialMap = plan.mapOutputTimeToSource(0)
+  video.currentTime = initialMap.sourceTime
+  await new Promise<void>((resolve) => {
+    let resolved = false
+    const done = () => {
+      if (!resolved) {
+        resolved = true
+        video.removeEventListener('seeked', done)
+        clearTimeout(timer)
+        resolve()
+      }
+    }
+    const timer = setTimeout(done, 200)
+    video.addEventListener('seeked', done, { once: true })
+    if (video.readyState >= 2) done()
+  })
+
+  const initialRect = initialMap.transformSettings
+    ? calculateTransformRect(
+        video.videoWidth || width,
+        video.videoHeight || height,
+        width,
+        height,
+        initialMap.transformSettings.fitMode,
+        initialMap.transformSettings.zoom,
+        initialMap.transformSettings.panX,
+        initialMap.transformSettings.panY
+      )
+    : { dx: 0, dy: 0, dw: width, dh: height }
+
+  for (const hc of historyCanvases) {
+    const hctx = hc.getContext('2d')
+    if (hctx) {
+      hctx.fillStyle = '#000000'
+      hctx.fillRect(0, 0, width, height)
+      hctx.drawImage(video, initialRect.dx, initialRect.dy, initialRect.dw, initialRect.dh)
+    }
+  }
+
+  // Helper for seeking and applying frame effects with safety timeout
+  const seekAndRender = async (
+    sourceTime: number,
+    effSmooth: SmoothSettings,
+    effTransform?: VideoTransformSettings
+  ): Promise<void> => {
+    const clampedTime = Math.max(0, Math.min(sourceTime, rawDuration - 0.001))
+
+    // Only wait for seek if timestamp has noticeably moved
+    if (Math.abs(video.currentTime - clampedTime) >= 0.002) {
+      await new Promise<void>((resolve) => {
+        let finished = false
+        const done = () => {
+          if (!finished) {
+            finished = true
+            video.removeEventListener('seeked', done)
+            clearTimeout(timer)
+            resolve()
+          }
+        }
+        const timer = setTimeout(done, 120) // Safety timeout prevents hangs
+        video.addEventListener('seeked', done, { once: true })
+        video.currentTime = clampedTime
+      })
+    }
+
+    // Shift history frames
+    for (let i = historyCanvases.length - 1; i > 0; i--) {
+      const destCtx = historyCanvases[i].getContext('2d')
+      if (destCtx) {
+        destCtx.clearRect(0, 0, width, height)
+        destCtx.drawImage(historyCanvases[i - 1], 0, 0)
+      }
+    }
+
+    // Place current frame in history[0]
+    const firstCtx = historyCanvases[0].getContext('2d')
+    if (firstCtx) {
+      const rect = effTransform
+        ? calculateTransformRect(
+            video.videoWidth || width,
+            video.videoHeight || height,
+            width,
+            height,
+            effTransform.fitMode,
+            effTransform.zoom,
+            effTransform.panX,
+            effTransform.panY
+          )
+        : { dx: 0, dy: 0, dw: width, dh: height }
+      firstCtx.fillStyle = '#000000'
+      firstCtx.fillRect(0, 0, width, height)
+      firstCtx.drawImage(video, rect.dx, rect.dy, rect.dw, rect.dh)
+    }
+
+    // Render onto offscreen canvas with smooth & motion blend
+    ctx.clearRect(0, 0, width, height)
+    applyFrameEffects(ctx, video, width, height, effSmooth, historyCanvases, effTransform)
+  }
+
+  // Method 1: WebCodecs VideoEncoder + mp4-muxer (Produces standard 100% iOS/Android compatible MP4 H.264)
+  if (
+    typeof (window as any).VideoEncoder !== 'undefined' &&
+    typeof (window as any).VideoFrame !== 'undefined'
+  ) {
+    try {
+      const chosenCodec = await selectSupportedVideoCodec(
+        width,
+        height,
+        plan.targetFps,
+        bitrate
+      )
+      const isAvc = chosenCodec.startsWith('avc1')
+
+      const muxer = new Muxer({
+        target: new ArrayBufferTarget(),
+        video: {
+          codec: isAvc ? 'avc' : 'vp9',
+          width,
+          height,
+        },
+        fastStart: 'in-memory',
+        firstTimestampBehavior: 'offset',
+      })
+
+      let encodeError: any = null
+      const videoEncoder = new (window as any).VideoEncoder({
+        output: (chunk: any, meta: any) => muxer.addVideoChunk(chunk, meta),
+        error: (e: any) => {
+          console.error('VideoEncoder error:', e)
+          encodeError = e
+        },
+      })
+
+      videoEncoder.configure({
+        codec: chosenCodec,
+        width,
+        height,
+        bitrate,
+        framerate: plan.targetFps,
+      })
+
+      const renderStartTime = performance.now()
+      const targetFps = plan.targetFps
+      const totalFrames = plan.totalFrames
+
+      for (let currentFrame = 0; currentFrame < totalFrames; currentFrame++) {
+        if (isCancelled()) {
+          try {
+            videoEncoder.close()
+          } catch {}
+          throw new Error('Export cancelled by user')
+        }
+        if (encodeError) {
+          throw encodeError
+        }
+
+        const outTimeSec = currentFrame / targetFps
+        const { sourceTime, smoothSettings: effSmooth, transformSettings: effTransform } =
+          plan.mapOutputTimeToSource(outTimeSec)
+
+        await seekAndRender(sourceTime, effSmooth, effTransform)
+
+        const timestampUs = Math.round(outTimeSec * 1_000_000)
+        const durationUs = Math.round((1 / targetFps) * 1_000_000)
+
+        const frame = new (window as any).VideoFrame(offscreenCanvas, {
+          timestamp: timestampUs,
+          duration: durationUs,
+        })
+
+        videoEncoder.encode(frame, { keyFrame: currentFrame % (targetFps * 2) === 0 })
+        frame.close()
+
+        // Backpressure to prevent excessive frame queuing
+        while (videoEncoder.encodeQueueSize > 8) {
+          await new Promise((r) => setTimeout(r, 10))
+        }
+
+        // Progress update every 3 frames or on last frame
+        if (currentFrame % 3 === 0 || currentFrame === totalFrames - 1) {
+          const elapsed = (performance.now() - renderStartTime) / 1000
+          const currentFps = elapsed > 0 ? Math.round((currentFrame + 1) / elapsed) : targetFps
+          const progress = Math.min(100, Math.round(((currentFrame + 1) / totalFrames) * 100))
+
+          onProgress({
+            currentFps,
+            renderedFrames: currentFrame + 1,
+            totalFrames,
+            progress,
+          })
+          await new Promise((r) => setTimeout(r, 0))
+        }
+      }
+
+      await videoEncoder.flush()
+      videoEncoder.close()
+      muxer.finalize()
+
+      const buffer = (muxer.target as ArrayBufferTarget).buffer
+      return new Blob([buffer], { type: 'video/mp4' })
+    } catch (err: any) {
+      if (err.message === 'Export cancelled by user') {
+        throw err
+      }
+      console.warn('WebCodecs MP4 export encountered error, attempting MediaRecorder fallback:', err)
+    }
+  }
+
+  // Method 2: Real-time Playback Synchronized MediaRecorder Fallback
+  // Guarantees exact playback speed parity without frame-by-frame 0.01x timing artifacts
+  return new Promise(async (resolve, reject) => {
+    try {
+      const stream = offscreenCanvas.captureStream(plan.targetFps)
+      const mimeTypes = [
+        'video/mp4;codecs=avc1.42E01E,mp4a.40.2',
+        'video/mp4;codecs=avc1',
+        'video/mp4',
+        'video/webm;codecs=vp9',
+        'video/webm',
+      ]
+
+      let chosenMime = ''
+      for (const mime of mimeTypes) {
+        if (MediaRecorder.isTypeSupported(mime)) {
+          chosenMime = mime
+          break
+        }
+      }
+
+      let mediaRecorder: MediaRecorder
+      try {
+        mediaRecorder = new MediaRecorder(stream, {
+          mimeType: chosenMime || undefined,
+          videoBitsPerSecond: bitrate,
+        })
+      } catch {
+        mediaRecorder = new MediaRecorder(stream)
+      }
+
+      const chunks: Blob[] = []
+      mediaRecorder.ondataavailable = (e) => {
+        if (e.data && e.data.size > 0) chunks.push(e.data)
+      }
+
+      mediaRecorder.onstop = () => {
+        const mimeOut = chosenMime.includes('webm') ? 'video/webm' : 'video/mp4'
+        resolve(new Blob(chunks, { type: mimeOut }))
+      }
+
+      mediaRecorder.onerror = (e) => reject(e)
+      mediaRecorder.start(200)
+
+      const startTime = performance.now()
+      let animId: number
+
+      const renderLoop = () => {
+        if (isCancelled()) {
+          cancelAnimationFrame(animId)
+          try {
+            mediaRecorder.stop()
+          } catch {}
+          reject(new Error('Export cancelled by user'))
+          return
+        }
+
+        const elapsedSec = (performance.now() - startTime) / 1000
+        if (elapsedSec >= plan.totalOutputDuration) {
+          cancelAnimationFrame(animId)
+          onProgress({
+            currentFps: plan.targetFps,
+            renderedFrames: plan.totalFrames,
+            totalFrames: plan.totalFrames,
+            progress: 100,
+          })
+          setTimeout(() => {
+            try {
+              mediaRecorder.stop()
+            } catch {}
+          }, 150)
+          return
+        }
+
+        const { sourceTime, smoothSettings: effSmooth, transformSettings: effTransform } =
+          plan.mapOutputTimeToSource(elapsedSec)
+
+        video.currentTime = sourceTime
 
         // Shift history frames
         for (let i = historyCanvases.length - 1; i > 0; i--) {
@@ -333,12 +846,6 @@ export async function exportSmoothedVideo(
             destCtx.drawImage(historyCanvases[i - 1], 0, 0)
           }
         }
-        // Check for per-cut specific settings
-        const activeBlock = timeBlocks?.find((b) => sourceTime >= b.start && sourceTime <= b.end)
-        const effSmooth = activeBlock?.smoothSettings || smoothSettings
-        const effTransform = activeBlock?.transformSettings || transformSettings
-
-        // Place current frame in history[0]
         const firstCtx = historyCanvases[0].getContext('2d')
         if (firstCtx) {
           const rect = effTransform
@@ -358,177 +865,25 @@ export async function exportSmoothedVideo(
           firstCtx.drawImage(video, rect.dx, rect.dy, rect.dw, rect.dh)
         }
 
-        // Render onto offscreen canvas with smooth & motion blend
         ctx.clearRect(0, 0, width, height)
         applyFrameEffects(ctx, video, width, height, effSmooth, historyCanvases, effTransform)
 
-        res()
-      }
-
-      video.addEventListener('seeked', onSeeked, { once: true })
-      video.currentTime = Math.min(sourceTime, rawDuration - 0.001)
-    })
-  }
-
-  // Method 1: WebCodecs VideoEncoder + mp4-muxer (Produces standard 100% iOS/Android compatible MP4 H.264)
-  if (typeof (window as any).VideoEncoder !== 'undefined' && typeof (window as any).VideoFrame !== 'undefined') {
-    try {
-      const muxer = new Muxer({
-        target: new ArrayBufferTarget(),
-        video: {
-          codec: 'avc',
-          width,
-          height,
-        },
-        fastStart: 'in-memory',
-        firstTimestampBehavior: 'offset',
-      })
-
-      let encodeError: any = null
-      const videoEncoder = new (window as any).VideoEncoder({
-        output: (chunk: any, meta: any) => muxer.addVideoChunk(chunk, meta),
-        error: (e: any) => {
-          console.error('VideoEncoder error:', e)
-          encodeError = e
-        },
-      })
-
-      // Configure H.264 Baseline Profile level 3.1 or Main (avc1.42E01F)
-      await videoEncoder.configure({
-        codec: 'avc1.42E01F',
-        width,
-        height,
-        bitrate,
-        framerate: targetFps,
-      })
-
-      const renderStartTime = performance.now()
-
-      for (let currentFrame = 0; currentFrame < totalFrames; currentFrame++) {
-        if (isCancelled()) {
-          videoEncoder.close()
-          throw new Error('Export cancelled by user')
-        }
-        if (encodeError) {
-          throw encodeError
-        }
-
-        // Map output frame to source video time in trimmed portion or across time blocks
-        const elapsedSec = (currentFrame / totalFrames) * activeDuration
-        const sourceTime = timeBlocks && timeBlocks.length > 0
-          ? getTimeFromTimeBlocks(timeBlocks, elapsedSec)
-          : trimStart + elapsedSec
-        await seekAndRender(sourceTime)
-
-        const timestampUs = Math.round((currentFrame / targetFps) * 1_000_000)
-        const frame = new (window as any).VideoFrame(offscreenCanvas, {
-          timestamp: timestampUs,
-          duration: Math.round((1 / targetFps) * 1_000_000),
-        })
-
-        videoEncoder.encode(frame, { keyFrame: currentFrame % (targetFps * 2) === 0 })
-        frame.close()
-
-        // Yield slightly for responsive UI progress
-        if (currentFrame % 5 === 0) {
-          await new Promise((r) => setTimeout(r, 0))
-        }
-
-        const elapsed = (performance.now() - renderStartTime) / 1000
-        const currentFps = elapsed > 0 ? Math.round(currentFrame / elapsed) : targetFps
-        const progress = Math.min(100, Math.round(((currentFrame + 1) / totalFrames) * 100))
+        const progress = Math.min(99, Math.round((elapsedSec / plan.totalOutputDuration) * 100))
+        const renderedFrames = Math.round(elapsedSec * plan.targetFps)
 
         onProgress({
-          currentFps,
-          renderedFrames: currentFrame + 1,
-          totalFrames,
+          currentFps: plan.targetFps,
+          renderedFrames,
+          totalFrames: plan.totalFrames,
           progress,
         })
+
+        animId = requestAnimationFrame(renderLoop)
       }
 
-      await videoEncoder.flush()
-      videoEncoder.close()
-      muxer.finalize()
-
-      const buffer = (muxer.target as ArrayBufferTarget).buffer
-      return new Blob([buffer], { type: 'video/mp4' })
+      animId = requestAnimationFrame(renderLoop)
     } catch (err) {
-      console.warn('WebCodecs MP4 export encountered error, attempting MediaRecorder fallback:', err)
+      reject(err)
     }
-  }
-
-  // Method 2: MediaRecorder Fallback (with MP4 preferred codecs)
-  return new Promise(async (resolve, reject) => {
-    const stream = offscreenCanvas.captureStream(targetFps)
-    const mimeTypes = [
-      'video/mp4;codecs=avc1.42E01E,mp4a.40.2',
-      'video/mp4;codecs=avc1',
-      'video/mp4',
-      'video/webm;codecs=vp9',
-      'video/webm',
-    ]
-
-    let chosenMime = ''
-    for (const mime of mimeTypes) {
-      if (MediaRecorder.isTypeSupported(mime)) {
-        chosenMime = mime
-        break
-      }
-    }
-
-    let mediaRecorder: MediaRecorder
-    try {
-      mediaRecorder = new MediaRecorder(stream, {
-        mimeType: chosenMime || undefined,
-        videoBitsPerSecond: bitrate,
-      })
-    } catch {
-      mediaRecorder = new MediaRecorder(stream)
-    }
-
-    const chunks: Blob[] = []
-    mediaRecorder.ondataavailable = (e) => {
-      if (e.data && e.data.size > 0) chunks.push(e.data)
-    }
-
-    mediaRecorder.onstop = () => {
-      // Package into video/mp4 Blob
-      const outputBlob = new Blob(chunks, { type: 'video/mp4' })
-      resolve(outputBlob)
-    }
-
-    mediaRecorder.onerror = (e) => reject(e)
-    mediaRecorder.start(200)
-
-    const renderStartTime = performance.now()
-
-    for (let currentFrame = 0; currentFrame < totalFrames; currentFrame++) {
-      if (isCancelled()) {
-        mediaRecorder.stop()
-        return reject(new Error('Export cancelled by user'))
-      }
-
-      const elapsedSec = (currentFrame / totalFrames) * activeDuration
-      const sourceTime = timeBlocks && timeBlocks.length > 0
-        ? getTimeFromTimeBlocks(timeBlocks, elapsedSec)
-        : trimStart + elapsedSec
-      await seekAndRender(sourceTime)
-
-      await new Promise((r) => setTimeout(r, 10))
-
-      const elapsed = (performance.now() - renderStartTime) / 1000
-      const currentFps = elapsed > 0 ? Math.round(currentFrame / elapsed) : targetFps
-      const progress = Math.min(100, Math.round(((currentFrame + 1) / totalFrames) * 100))
-
-      onProgress({
-        currentFps,
-        renderedFrames: currentFrame + 1,
-        totalFrames,
-        progress,
-      })
-    }
-
-    await new Promise((r) => setTimeout(r, 200))
-    mediaRecorder.stop()
   })
 }

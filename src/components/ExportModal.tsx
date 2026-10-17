@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react'
+import React, { useState, useRef, useEffect, useCallback } from 'react'
 import {
   X,
   Download,
@@ -6,14 +6,27 @@ import {
   Monitor,
   CheckCircle2,
   AlertCircle,
+  AlertTriangle,
   Sparkles,
   ShieldCheck,
+  Clock,
+  RotateCcw,
 } from 'lucide-react'
 import confetti from 'canvas-confetti'
-import { ExportSettings, SmoothSettings, TargetFPS, TimeBlock, TrimRange, VideoMetadata, VideoTransformSettings } from '../types'
+import {
+  ExportSettings,
+  SmoothSettings,
+  TargetFPS,
+  TimeBlock,
+  TrimRange,
+  VideoMetadata,
+  VideoTransformSettings,
+} from '../types'
 import {
   calculateTargetDimensions,
+  createExportPlan,
   exportSmoothedVideo,
+  formatDuration,
   RenderStats,
 } from '../utils/videoProcessor'
 import { Language, translations } from '../utils/i18n'
@@ -52,6 +65,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({
   })
 
   const [isExporting, setIsExporting] = useState(false)
+  const [showCancelConfirm, setShowCancelConfirm] = useState(false)
   const [progressStats, setProgressStats] = useState<RenderStats>({
     currentFps: 0,
     renderedFrames: 0,
@@ -63,8 +77,47 @@ export const ExportModal: React.FC<ExportModalProps> = ({
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
 
   const cancelRef = useRef(false)
+  const exportedUrlRef = useRef<string | null>(null)
 
-  if (!isOpen) return null
+  // Keep ref in sync for cleanup
+  useEffect(() => {
+    exportedUrlRef.current = exportedUrl
+  }, [exportedUrl])
+
+  // Complete cleanup and reset state
+  const resetExportState = useCallback(() => {
+    if (exportedUrlRef.current) {
+      URL.revokeObjectURL(exportedUrlRef.current)
+      exportedUrlRef.current = null
+    }
+    setExportedUrl(null)
+    setExportedBlob(null)
+    setErrorMsg(null)
+    setIsExporting(false)
+    setShowCancelConfirm(false)
+    setProgressStats({
+      currentFps: 0,
+      renderedFrames: 0,
+      totalFrames: 0,
+      progress: 0,
+    })
+    cancelRef.current = false
+  }, [])
+
+  // Clear export state whenever a new video source is loaded
+  useEffect(() => {
+    resetExportState()
+  }, [videoSrc, resetExportState])
+
+  // Reset state when modal is closed
+  const handleClose = () => {
+    if (isExporting) {
+      setShowCancelConfirm(true)
+      return
+    }
+    resetExportState()
+    onClose()
+  }
 
   // Calculate projected dimensions
   const dims = calculateTargetDimensions(
@@ -74,9 +127,24 @@ export const ExportModal: React.FC<ExportModalProps> = ({
     transformSettings?.aspectRatio || 'original'
   )
 
+  // Calculate accurate export plan (matching preview time & duration)
+  const exportPlan = createExportPlan(
+    metadata?.duration || 0,
+    smoothSettings,
+    exportSettings.fps,
+    timeBlocks,
+    trimRange,
+    transformSettings
+  )
+
   const handleStartExport = async () => {
     setIsExporting(true)
+    setShowCancelConfirm(false)
     setErrorMsg(null)
+    if (exportedUrlRef.current) {
+      URL.revokeObjectURL(exportedUrlRef.current)
+      exportedUrlRef.current = null
+    }
     setExportedUrl(null)
     setExportedBlob(null)
     cancelRef.current = false
@@ -94,6 +162,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({
       )
 
       const url = URL.createObjectURL(blob)
+      exportedUrlRef.current = url
       setExportedBlob(blob)
       setExportedUrl(url)
       setIsExporting(false)
@@ -133,14 +202,26 @@ export const ExportModal: React.FC<ExportModalProps> = ({
     document.body.removeChild(a)
   }
 
-  const handleCancel = () => {
+  // Confirmation Alert when clicking cancel
+  const handleCancelClick = () => {
+    setShowCancelConfirm(true)
+  }
+
+  const handleConfirmCancel = () => {
     cancelRef.current = true
+    setShowCancelConfirm(false)
     setIsExporting(false)
   }
 
+  const handleDismissCancelAlert = () => {
+    setShowCancelConfirm(false)
+  }
+
+  if (!isOpen) return null
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in">
-      <div className="relative w-full max-w-xl bg-[#0f121d] border border-white/[0.1] rounded-2xl shadow-2xl overflow-hidden flex flex-col">
+      <div className="relative w-full max-w-xl bg-[#0f121d] border border-white/[0.1] rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
         {/* Modal Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-white/[0.08] bg-slate-900/40">
           <div className="flex items-center gap-2.5">
@@ -157,18 +238,17 @@ export const ExportModal: React.FC<ExportModalProps> = ({
             </div>
           </div>
 
-          {!isExporting && (
-            <button
-              onClick={onClose}
-              className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-white/[0.08] transition-colors cursor-pointer"
-            >
-              <X className="w-5 h-5" />
-            </button>
-          )}
+          <button
+            onClick={handleClose}
+            className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-white/[0.08] transition-colors cursor-pointer"
+            title={t.closeModalBtn}
+          >
+            <X className="w-5 h-5" />
+          </button>
         </div>
 
         {/* Modal Body */}
-        <div className="p-6 space-y-6">
+        <div className="p-6 space-y-6 overflow-y-auto">
           {errorMsg && (
             <div className="p-3.5 rounded-xl bg-red-950/50 border border-red-500/30 text-red-200 text-xs flex items-center gap-2">
               <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />
@@ -240,22 +320,52 @@ export const ExportModal: React.FC<ExportModalProps> = ({
                 </div>
               </div>
 
-              {/* Summary Specs */}
-              <div className="p-3.5 rounded-xl bg-slate-900/60 border border-white/[0.06] text-xs space-y-2">
-                <div className="flex items-center justify-between text-slate-300">
+              {/* Accurate Duration & Summary Specs */}
+              <div className="p-3.5 rounded-xl bg-slate-900/70 border border-white/[0.08] text-xs space-y-2.5 shadow-inner">
+                {/* Highlighted Accurate Duration Banner */}
+                <div className="p-2.5 rounded-lg bg-gradient-to-r from-violet-950/70 via-indigo-950/60 to-cyan-950/60 border border-violet-500/30 flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Clock className="w-4 h-4 text-cyan-300 shrink-0" />
+                    <div>
+                      <span className="font-semibold text-white block">
+                        {t.finalOutputDuration}
+                      </span>
+                      <span className="text-[10px] text-slate-400">
+                        {t.finalDurationDesc}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <span className="text-sm font-bold font-mono text-cyan-300 block">
+                      {formatDuration(exportPlan.totalOutputDuration)} ({exportPlan.totalOutputDuration.toFixed(2)}s)
+                    </span>
+                    <span className="text-[10px] font-mono text-slate-400">
+                      {exportPlan.totalFrames} {t.framesWord} @ {exportSettings.fps} FPS
+                    </span>
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between text-slate-300 pt-1">
                   <span className="text-slate-400">{t.outputDimensions}</span>
                   <span className="font-mono font-semibold text-cyan-300">
                     {dims.width} × {dims.height} px
                   </span>
                 </div>
-                {trimRange && metadata && (trimRange.start > 0 || trimRange.end < metadata.duration) && (
+
+                {metadata && (
                   <div className="flex items-center justify-between text-slate-300">
-                    <span className="text-slate-400">Trimmed Duration:</span>
+                    <span className="text-slate-400">{t.originalSelectedDuration}</span>
                     <span className="font-mono font-semibold text-amber-300">
-                      {(trimRange.end - trimRange.start).toFixed(2)}s (from {metadata.duration.toFixed(1)}s)
+                      {exportPlan.totalSourceDuration.toFixed(2)}s
+                      {metadata.duration > 0 && exportPlan.totalSourceDuration < metadata.duration && (
+                        <span className="text-slate-500 font-normal ml-1">
+                          (from {metadata.duration.toFixed(1)}s source)
+                        </span>
+                      )}
                     </span>
                   </div>
                 )}
+
                 {transformSettings && transformSettings.aspectRatio !== 'original' && (
                   <div className="flex items-center justify-between text-slate-300">
                     <span className="text-slate-400">Aspect Ratio:</span>
@@ -264,20 +374,23 @@ export const ExportModal: React.FC<ExportModalProps> = ({
                     </span>
                   </div>
                 )}
+
                 <div className="flex items-center justify-between text-slate-300">
                   <span className="text-slate-400">{t.targetSmoothFlow}</span>
                   <span className="font-mono font-semibold text-violet-300">
                     {exportSettings.fps} FPS ({smoothSettings.intensity}% Smooth)
                   </span>
                 </div>
+
                 {smoothSettings.playbackSpeed && smoothSettings.playbackSpeed < 1.0 && (
                   <div className="flex items-center justify-between text-slate-300">
-                    <span className="text-slate-400">Slow & Smooth Mode:</span>
+                    <span className="text-slate-400">Slow & Smooth:</span>
                     <span className="font-mono font-semibold text-cyan-300">
                       {smoothSettings.playbackSpeed}x Speed ({(1 / smoothSettings.playbackSpeed).toFixed(1)}x Slower)
                     </span>
                   </div>
                 )}
+
                 <div className="flex items-center justify-between text-slate-300">
                   <span className="text-slate-400">{t.fileFormat}</span>
                   <span className="font-mono font-bold text-emerald-400 flex items-center gap-1.5">
@@ -308,8 +421,11 @@ export const ExportModal: React.FC<ExportModalProps> = ({
 
               <div className="space-y-1">
                 <h4 className="text-base font-bold text-white">{t.renderingTitle}</h4>
-                <p className="text-xs text-slate-400">
+                <p className="text-xs text-slate-400 font-mono">
                   {t.renderingFrameProgress} {progressStats.renderedFrames} {t.ofTotalFrames} {progressStats.totalFrames} {t.framesWord}
+                </p>
+                <p className="text-[11px] text-cyan-400/90 font-mono">
+                  {t.finalOutputDuration} {formatDuration(exportPlan.totalOutputDuration)} @ {exportSettings.fps} FPS
                 </p>
               </div>
 
@@ -327,7 +443,8 @@ export const ExportModal: React.FC<ExportModalProps> = ({
               </div>
 
               <button
-                onClick={handleCancel}
+                type="button"
+                onClick={handleCancelClick}
                 className="px-4 py-2 text-xs font-semibold text-red-300 hover:text-white bg-red-950/40 hover:bg-red-900/60 border border-red-500/30 rounded-lg transition-colors cursor-pointer"
               >
                 {t.cancelExportBtn}
@@ -342,23 +459,38 @@ export const ExportModal: React.FC<ExportModalProps> = ({
 
               <div className="space-y-1">
                 <h4 className="text-lg font-bold text-white">{t.exportSuccessTitle}</h4>
-                <p className="text-xs text-slate-400 font-mono">
-                  {dims.width}×{dims.height} @ {exportSettings.fps} FPS ({((exportedBlob?.size || 0) / (1024 * 1024)).toFixed(2)} MB)
+                <p className="text-xs text-slate-300 font-mono">
+                  {dims.width}×{dims.height} @ {exportSettings.fps} FPS • {formatDuration(exportPlan.totalOutputDuration)} ({((exportedBlob?.size || 0) / (1024 * 1024)).toFixed(2)} MB)
+                </p>
+                <p className="text-[11px] text-slate-400">
+                  {t.exportSuccessDesc}
                 </p>
               </div>
 
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-2.5 flex-wrap justify-center pt-2">
                 <button
+                  type="button"
                   onClick={() => triggerDownload()}
-                  className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-500 hover:from-emerald-500 hover:to-teal-400 text-white font-semibold text-sm shadow-lg shadow-emerald-600/30 transition-all cursor-pointer"
+                  className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-500 hover:from-emerald-500 hover:to-teal-400 text-white font-semibold text-xs shadow-lg shadow-emerald-600/30 transition-all cursor-pointer"
                 >
                   <Download className="w-4 h-4" />
                   <span>{t.downloadAgainBtn}</span>
                 </button>
 
                 <button
-                  onClick={onClose}
-                  className="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-sm font-medium transition-colors cursor-pointer"
+                  type="button"
+                  onClick={resetExportState}
+                  className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-violet-900/40 hover:bg-violet-800/60 border border-violet-500/30 text-violet-200 text-xs font-medium transition-colors cursor-pointer"
+                  title="Clear export cache and start another export"
+                >
+                  <RotateCcw className="w-3.5 h-3.5 text-violet-400" />
+                  <span>{t.newExportBtn}</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleClose}
+                  className="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-medium transition-colors cursor-pointer"
                 >
                   {t.closeModalBtn}
                 </button>
@@ -371,18 +503,57 @@ export const ExportModal: React.FC<ExportModalProps> = ({
         {!isExporting && !exportedUrl && (
           <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-white/[0.08] bg-slate-900/40">
             <button
-              onClick={onClose}
+              type="button"
+              onClick={handleClose}
               className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-300 hover:text-white hover:bg-white/[0.05] transition-colors cursor-pointer"
             >
               {t.cancelWord}
             </button>
             <button
+              type="button"
               onClick={handleStartExport}
               className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-violet-600 via-indigo-600 to-cyan-500 hover:from-violet-500 hover:via-indigo-500 hover:to-cyan-400 text-white text-xs font-bold shadow-lg shadow-violet-600/30 transition-all cursor-pointer"
             >
               <Sparkles className="w-4 h-4" />
-              <span>{t.startExportBtn} ({exportSettings.fps} FPS)</span>
+              <span>{t.startExportBtn} ({exportSettings.fps} FPS • {formatDuration(exportPlan.totalOutputDuration)})</span>
             </button>
+          </div>
+        )}
+
+        {/* Confirmation Alert Dialog for Cancel Export */}
+        {showCancelConfirm && (
+          <div className="absolute inset-0 z-50 flex items-center justify-center p-5 bg-black/85 backdrop-blur-md animate-in fade-in duration-150">
+            <div className="w-full max-w-sm bg-[#131622] border border-red-500/40 rounded-2xl p-5 shadow-2xl flex flex-col items-center text-center space-y-4">
+              <div className="w-12 h-12 rounded-full bg-red-500/20 border border-red-500/40 text-red-400 flex items-center justify-center shadow-lg shadow-red-500/20">
+                <AlertTriangle className="w-6 h-6 animate-pulse" />
+              </div>
+
+              <div className="space-y-1.5">
+                <h4 className="text-base font-bold text-white tracking-tight">
+                  {t.confirmCancelExportTitle}
+                </h4>
+                <p className="text-xs text-slate-300 leading-relaxed">
+                  {t.confirmCancelExportDesc}
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2.5 w-full pt-1">
+                <button
+                  type="button"
+                  onClick={handleDismissCancelAlert}
+                  className="flex-1 px-3.5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold border border-white/10 transition-colors cursor-pointer"
+                >
+                  {t.confirmCancelKeepBtn}
+                </button>
+                <button
+                  type="button"
+                  onClick={handleConfirmCancel}
+                  className="flex-1 px-3.5 py-2.5 rounded-xl bg-red-600 hover:bg-red-500 text-white text-xs font-bold shadow-md shadow-red-600/30 transition-colors cursor-pointer"
+                >
+                  {t.confirmCancelConfirmBtn}
+                </button>
+              </div>
+            </div>
           </div>
         )}
       </div>

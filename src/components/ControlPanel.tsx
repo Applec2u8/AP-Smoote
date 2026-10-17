@@ -28,6 +28,7 @@ import {
 import { Language, translations } from '../utils/i18n'
 import { TimelineTrimmer } from './TimelineTrimmer'
 import { AspectResizeControl } from './AspectResizeControl'
+import { createExportPlan, formatDuration } from '../utils/videoProcessor'
 
 export type PanelTab = 'trim' | 'smooth' | 'export'
 
@@ -637,23 +638,58 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
               lang={lang}
             />
 
-            {/* Video Specs Summary */}
-            {metadata && (
-              <div className="p-3 rounded-xl bg-slate-900/50 border border-white/[0.06] text-xs space-y-1.5 text-slate-400">
-                <div className="flex items-center gap-1.5 font-semibold text-slate-300">
-                  <Film className="w-3.5 h-3.5 text-slate-400" />
-                  <span>{t.videoMetaTitle}</span>
-                </div>
-                <div className="grid grid-cols-2 gap-2 text-[11px] pt-1 font-mono">
-                  <div>
-                    {t.metaResolution} {metadata.width}×{metadata.height}
+            {/* Video Specs & Accurate Export Duration Summary */}
+            {metadata && (() => {
+              const exportPlan = createExportPlan(
+                metadata.duration || 0,
+                currentSmooth,
+                60,
+                timeBlocks,
+                trimRange,
+                currentTransform
+              )
+              return (
+                <div className="p-3.5 rounded-xl bg-slate-900/60 border border-white/[0.08] text-xs space-y-2.5 text-slate-400">
+                  <div className="flex items-center justify-between font-semibold text-slate-300">
+                    <div className="flex items-center gap-1.5">
+                      <Film className="w-3.5 h-3.5 text-slate-400" />
+                      <span>{t.videoMetaTitle}</span>
+                    </div>
+                    <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-violet-950/60 border border-violet-500/30 text-violet-300">
+                      {exportPlan.totalFrames} frames @ 60 FPS
+                    </span>
                   </div>
-                  <div>
-                    {t.metaDuration} {metadata.duration.toFixed(1)} {t.seconds}
+
+                  <div className="p-2 rounded-lg bg-slate-950/60 border border-cyan-500/20 flex items-center justify-between">
+                    <div>
+                      <span className="text-[11px] font-medium text-cyan-300 block">
+                        {t.finalOutputDuration}
+                      </span>
+                      <span className="text-[9px] text-slate-500">
+                        {t.finalDurationDesc}
+                      </span>
+                    </div>
+                    <span className="text-sm font-bold font-mono text-cyan-300">
+                      {formatDuration(exportPlan.totalOutputDuration)}
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2 text-[11px] pt-0.5 font-mono">
+                    <div>
+                      <span className="text-slate-500">{t.metaResolution}</span> {metadata.width}×{metadata.height}
+                    </div>
+                    <div>
+                      <span className="text-slate-500">{t.metaDuration}</span> {metadata.duration.toFixed(1)} {t.seconds}
+                    </div>
+                    {currentSmooth.playbackSpeed && currentSmooth.playbackSpeed < 1.0 && (
+                      <div className="col-span-2 text-cyan-400/90 text-[10px]">
+                        Slow Motion: {currentSmooth.playbackSpeed}x ({(1 / currentSmooth.playbackSpeed).toFixed(1)}x Slower)
+                      </div>
+                    )}
                   </div>
                 </div>
-              </div>
-            )}
+              )
+            })()}
           </div>
         )}
       </div>
@@ -680,13 +716,28 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
         )}
 
         {/* Primary Export Button */}
-        <button
-          onClick={onOpenExport}
-          className="w-full inline-flex items-center justify-center gap-2 py-3 px-4 rounded-xl bg-gradient-to-r from-violet-600 via-indigo-600 to-cyan-500 hover:from-violet-500 hover:via-indigo-500 hover:to-cyan-400 text-white font-bold text-sm shadow-lg shadow-violet-600/30 hover:shadow-violet-600/50 transition-all cursor-pointer transform hover:-translate-y-0.5 active:translate-y-0 min-h-[44px] touch-manipulation"
-        >
-          <Download className="w-4 h-4" />
-          <span>{t.exportCtaBtn}</span>
-        </button>
+        {(() => {
+          const exportPlan = createExportPlan(
+            metadata?.duration || 0,
+            currentSmooth,
+            60,
+            timeBlocks,
+            trimRange,
+            currentTransform
+          )
+          return (
+            <button
+              onClick={onOpenExport}
+              className="w-full inline-flex items-center justify-center gap-2 py-3 px-4 rounded-xl bg-gradient-to-r from-violet-600 via-indigo-600 to-cyan-500 hover:from-violet-500 hover:via-indigo-500 hover:to-cyan-400 text-white font-bold text-sm shadow-lg shadow-violet-600/30 hover:shadow-violet-600/50 transition-all cursor-pointer transform hover:-translate-y-0.5 active:translate-y-0 min-h-[44px] touch-manipulation"
+            >
+              <Download className="w-4 h-4" />
+              <span>
+                {t.exportCtaBtn}
+                {metadata && metadata.duration > 0 && ` (${formatDuration(exportPlan.totalOutputDuration)})`}
+              </span>
+            </button>
+          )
+        })()}
       </div>
     </div>
   )
