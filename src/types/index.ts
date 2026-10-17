@@ -74,3 +74,21 @@ export interface ProjectMetadata {
   created_at?: string
   updated_at?: string
 }
+
+export interface ProjectItem {
+  id: string
+  name: string
+  videoBlob: Blob
+  videoName: string
+  videoSize: number
+  videoType: string
+  metadata: VideoMetadata
+  smoothSettings: SmoothSettings
+  timeBlocks: TimeBlock[]
+  trimRange: TrimRange
+  transformSettings: VideoTransformSettings
+  thumbnailDataUrl?: string
+  createdAt: number
+  updatedAt: number
+}
+

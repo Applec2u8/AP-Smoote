@@ -14,6 +14,7 @@ import {
   isSupabaseConfigured,
 } from './utils/supabase'
 import {
+  ProjectItem,
   ProjectMetadata,
   SmoothSettings,
   TimeBlock,
@@ -23,6 +24,14 @@ import {
 } from './types'
 import { Language, translations } from './utils/i18n'
 import {
+  saveProjectToIDB,
+  getAllProjectsFromIDB,
+  deleteProjectFromIDB,
+  saveActiveSessionToIDB,
+  getActiveSessionFromIDB,
+  clearActiveSessionFromIDB,
+  captureCurrentCanvasThumbnail,
+  generateVideoThumbnail,
   saveVideoToIDB,
   getVideoFromIDB,
   clearVideoFromIDB,
@@ -40,6 +49,8 @@ import {
   CheckCircle2,
   Undo2,
   Redo2,
+  Save,
+  FolderOpen,
 } from 'lucide-react'
 
 export const defaultSmoothSettings: SmoothSettings = {
@@ -263,8 +274,13 @@ export function App() {
   const [seekTime, setSeekTime] = useState<number | null>(null)
   const [togglePlayTrigger, setTogglePlayTrigger] = useState(0)
 
-  // Session restored toast
+  // Project Workspace & Session Management State
+  const [activeProjectId, setActiveProjectId] = useState<string | null>(null)
+  const [localProjects, setLocalProjects] = useState<ProjectItem[]>([])
+  const [isAutoSaved, setIsAutoSaved] = useState(false)
   const [showRestoredNotice, setShowRestoredNotice] = useState(false)
+  const [showProjectSavedToast, setShowProjectSavedToast] = useState(false)
+  const [showProjectSwitchToast, setShowProjectSwitchToast] = useState(false)
 
   // Modals
   const [isExportOpen, setIsExportOpen] = useState(false)
@@ -287,6 +303,12 @@ export function App() {
     setTogglePlayTrigger((n) => n + 1)
   }
 
+  // Reload local projects list from IndexedDB
+  const reloadLocalProjects = useCallback(async () => {
+    const list = await getAllProjectsFromIDB()
+    setLocalProjects(list)
+  }, [])
+
   // Check Supabase connection and load history
   const reloadSupabaseStatus = useCallback(async () => {
     const configured = isSupabaseConfigured()
@@ -297,7 +319,8 @@ export function App() {
 
   useEffect(() => {
     reloadSupabaseStatus()
-  }, [reloadSupabaseStatus])
+    reloadLocalProjects()
+  }, [reloadSupabaseStatus, reloadLocalProjects])
 
   // Revoke object URLs to avoid memory leaks
   const cleanCurrentVideoUrl = () => {
@@ -306,10 +329,43 @@ export function App() {
     }
   }
 
-  // 1. Auto-Restore session from IndexedDB + localStorage on initial mount
+  // 1. Auto-Restore session from IndexedDB on initial mount (Active Session -> Legacy Video)
   useEffect(() => {
     async function restoreSession() {
       try {
+        // Priority 1: Check active session in IndexedDB (Full Project Item with video Blob)
+        const activeSession = await getActiveSessionFromIDB()
+        if (activeSession && activeSession.videoBlob) {
+          const url = URL.createObjectURL(activeSession.videoBlob)
+          setVideoUrl(url)
+          setVideoFile(new File([activeSession.videoBlob], activeSession.videoName, { type: activeSession.videoType }))
+          setActiveProjectId(activeSession.id)
+          if (activeSession.name) setProjectName(activeSession.name)
+          if (activeSession.metadata) setMetadata(activeSession.metadata)
+          if (activeSession.smoothSettings) setSmoothSettings(activeSession.smoothSettings)
+          if (activeSession.transformSettings) setTransformSettings(activeSession.transformSettings)
+          if (activeSession.trimRange) setTrimRange(activeSession.trimRange)
+          if (Array.isArray(activeSession.timeBlocks) && activeSession.timeBlocks.length > 0) {
+            setTimeBlocks(activeSession.timeBlocks)
+            setSelectedBlockId(activeSession.timeBlocks[0].id)
+          }
+
+          const initialSnap: HistorySnapshot = {
+            timeBlocks: activeSession.timeBlocks || [],
+            smoothSettings: activeSession.smoothSettings || defaultSmoothSettings,
+            transformSettings: activeSession.transformSettings || defaultTransformSettings,
+            selectedBlockId: activeSession.timeBlocks?.[0]?.id || null,
+          }
+          setHistoryStack([initialSnap])
+          setHistoryIndex(0)
+          setIsAutoSaved(true)
+
+          setShowRestoredNotice(true)
+          setTimeout(() => setShowRestoredNotice(false), 5000)
+          return
+        }
+
+        // Priority 2: Fallback to legacy video restore
         const stored = await getVideoFromIDB()
         if (stored && stored.blob) {
           const url = URL.createObjectURL(stored.blob)
@@ -389,6 +445,74 @@ export function App() {
     }
   }, [metadata])
 
+  // 3. Real-time Auto-Save session to IndexedDB (debounced)
+  useEffect(() => {
+    if (!videoUrl) return
+
+    setIsAutoSaved(false)
+    const timer = setTimeout(async () => {
+      try {
+        // Use videoFile directly (it's a File which extends Blob), or fetch from URL
+        let blob: Blob | undefined = videoFile ?? undefined
+        if (!blob) {
+          const fetched = await fetch(videoUrl).then((r) => r.blob()).catch(() => null)
+          if (!fetched) return
+          blob = fetched
+        }
+
+        const projectId = activeProjectId || `proj_${Date.now().toString(36)}`
+        const thumb = captureCurrentCanvasThumbnail()
+
+        const sessionRecord: ProjectItem = {
+          id: projectId,
+          name: projectName,
+          videoBlob: blob,
+          videoName: metadata?.name || videoFile?.name || 'video.mp4',
+          videoSize: blob.size,
+          videoType: blob.type || 'video/mp4',
+          metadata: metadata || {
+            name: videoFile?.name || 'video',
+            size: blob.size,
+            type: blob.type || 'video/mp4',
+            duration: 0,
+            width: 0,
+            height: 0,
+            aspectRatio: 16 / 9,
+          },
+          smoothSettings,
+          timeBlocks,
+          trimRange,
+          transformSettings,
+          thumbnailDataUrl: thumb,
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        }
+
+        await saveActiveSessionToIDB(sessionRecord)
+        if (activeProjectId) {
+          await saveProjectToIDB(sessionRecord)
+          const updated = await getAllProjectsFromIDB()
+          setLocalProjects(updated)
+        }
+        setIsAutoSaved(true)
+      } catch (err) {
+        console.warn('Auto-save error:', err)
+      }
+    }, 1000)
+
+    return () => clearTimeout(timer)
+  }, [
+    videoUrl,
+    videoFile,
+    projectName,
+    smoothSettings,
+    transformSettings,
+    timeBlocks,
+    trimRange,
+    metadata,
+    activeProjectId,
+  ])
+
   // Handle local video selection
   const handleVideoSelected = async (file: File) => {
     cleanCurrentVideoUrl()
@@ -413,9 +537,38 @@ export function App() {
     }
     setMetadata(initialMeta)
 
-    // Save to IndexedDB client-side
+    const newProjId = `proj_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`
+    setActiveProjectId(newProjId)
+
+    // Generate initial thumbnail
+    const thumb = await generateVideoThumbnail(file)
+
+    const newProject: ProjectItem = {
+      id: newProjId,
+      name,
+      videoBlob: file,
+      videoName: file.name,
+      videoSize: file.size,
+      videoType: file.type,
+      metadata: initialMeta,
+      smoothSettings: defaultSmoothSettings,
+      timeBlocks: [],
+      trimRange: { start: 0, end: 0 },
+      transformSettings: defaultTransformSettings,
+      thumbnailDataUrl: thumb,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    }
+
+    // Save to IndexedDB project & session
+    await saveProjectToIDB(newProject)
+    await saveActiveSessionToIDB(newProject)
     await saveVideoToIDB(file, file.name)
     localStorage.setItem('smoot_project_name', name)
+
+    const updatedProjects = await getAllProjectsFromIDB()
+    setLocalProjects(updatedProjects)
+    setIsAutoSaved(true)
 
     // Initial history snapshot
     const initialSnap: HistorySnapshot = {
@@ -463,9 +616,36 @@ export function App() {
       }
       setSmoothSettings(newSmooth)
 
-      // Save to IDB
+      const demoProjId = `proj_demo_${Date.now().toString(36)}`
+      setActiveProjectId(demoProjId)
+
+      const thumb = await generateVideoThumbnail(demo.blob)
+
+      const demoProject: ProjectItem = {
+        id: demoProjId,
+        name,
+        videoBlob: demo.blob,
+        videoName: demo.name,
+        videoSize: demo.blob.size,
+        videoType: 'video/webm',
+        metadata: demoMeta,
+        smoothSettings: newSmooth,
+        timeBlocks: demoBlocks,
+        trimRange: { start: 0, end: 4.5 },
+        transformSettings: defaultTransformSettings,
+        thumbnailDataUrl: thumb,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      }
+
+      await saveProjectToIDB(demoProject)
+      await saveActiveSessionToIDB(demoProject)
       await saveVideoToIDB(demo.blob, demo.name)
       localStorage.setItem('smoot_project_name', name)
+
+      const updatedProjects = await getAllProjectsFromIDB()
+      setLocalProjects(updatedProjects)
+      setIsAutoSaved(true)
 
       // Initial history snapshot
       const initialSnap: HistorySnapshot = {
@@ -484,14 +664,59 @@ export function App() {
     }
   }
 
-  // Handle Save Project Metadata to Supabase
+  // Handle Save Project (Full Video Blob + Settings to IndexedDB & Metadata to Supabase)
   const handleSaveProject = async () => {
+    if (!videoUrl) return
     setIsSaving(true)
     try {
+      // Get blob: prefer in-memory videoFile, otherwise fetch from object URL
+      let blob: Blob = videoFile!
+      if (!blob) {
+        blob = await fetch(videoUrl).then((r) => r.blob())
+      }
+      const projectId = activeProjectId || `proj_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`
+      const canvasThumb = captureCurrentCanvasThumbnail()
+      const thumb = canvasThumb || (await generateVideoThumbnail(blob))
+
+      const projectItem: ProjectItem = {
+        id: projectId,
+        name: projectName,
+        videoBlob: blob,
+        videoName: metadata?.name || videoFile?.name || 'video.mp4',
+        videoSize: blob.size,
+        videoType: blob.type || 'video/mp4',
+        metadata: metadata || {
+          name: videoFile?.name || 'video',
+          size: blob.size,
+          type: blob.type || 'video/mp4',
+          duration: 0,
+          width: 0,
+          height: 0,
+          aspectRatio: 16 / 9,
+        },
+        smoothSettings,
+        timeBlocks,
+        trimRange,
+        transformSettings,
+        thumbnailDataUrl: thumb,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      }
+
+      // 1. Save complete project + active session to IndexedDB
+      await saveProjectToIDB(projectItem)
+      await saveActiveSessionToIDB(projectItem)
+      setActiveProjectId(projectId)
+
+      const updatedList = await getAllProjectsFromIDB()
+      setLocalProjects(updatedList)
+
+      // 2. Sync metadata to Supabase if connected
       const payload: ProjectMetadata = {
+        id: projectId,
         project_name: projectName,
-        video_name: metadata?.name || videoFile?.name || 'video',
-        video_size: metadata?.size || videoFile?.size || 0,
+        video_name: projectItem.videoName,
+        video_size: projectItem.videoSize,
         duration: metadata?.duration || 0,
         width: metadata?.width || 0,
         height: metadata?.height || 0,
@@ -507,13 +732,16 @@ export function App() {
         transform_settings: transformSettings,
       }
 
-      const res = await saveProjectMetadata(payload)
-      if (res.success) {
-        const timeStr = new Date().toLocaleTimeString()
-        setLastSavedAt(timeStr)
-        const updatedList = await fetchProjectHistory()
-        setProjects(updatedList)
-      }
+      await saveProjectMetadata(payload)
+      const updatedCloud = await fetchProjectHistory()
+      setProjects(updatedCloud)
+
+      const timeStr = new Date().toLocaleTimeString()
+      setLastSavedAt(timeStr)
+      setIsAutoSaved(true)
+
+      setShowProjectSavedToast(true)
+      setTimeout(() => setShowProjectSavedToast(false), 4500)
     } catch (err) {
       console.warn('Save failed:', err)
     } finally {
@@ -521,7 +749,60 @@ export function App() {
     }
   }
 
-  // Handle Load project from history
+  // Handle Load project 100% from IndexedDB (Video Blob + Settings)
+  const handleOpenLocalProject = async (proj: ProjectItem) => {
+    try {
+      cleanCurrentVideoUrl()
+      const newUrl = URL.createObjectURL(proj.videoBlob)
+      const file = new File([proj.videoBlob], proj.videoName, { type: proj.videoType })
+      setVideoUrl(newUrl)
+      setVideoFile(file)
+      setActiveProjectId(proj.id)
+      setProjectName(proj.name)
+      if (proj.metadata) setMetadata(proj.metadata)
+      if (proj.smoothSettings) setSmoothSettings(proj.smoothSettings)
+      if (proj.transformSettings) setTransformSettings(proj.transformSettings)
+      if (proj.trimRange) setTrimRange(proj.trimRange)
+      if (Array.isArray(proj.timeBlocks) && proj.timeBlocks.length > 0) {
+        setTimeBlocks(proj.timeBlocks)
+        setSelectedBlockId(proj.timeBlocks[0].id)
+      } else {
+        setTimeBlocks([])
+        setSelectedBlockId(null)
+      }
+
+      await saveActiveSessionToIDB(proj)
+      setIsAutoSaved(true)
+
+      const initialSnap: HistorySnapshot = {
+        timeBlocks: proj.timeBlocks || [],
+        smoothSettings: proj.smoothSettings || defaultSmoothSettings,
+        transformSettings: proj.transformSettings || defaultTransformSettings,
+        selectedBlockId: proj.timeBlocks?.[0]?.id || null,
+      }
+      setHistoryStack([initialSnap])
+      setHistoryIndex(0)
+
+      setShowProjectSwitchToast(true)
+      setTimeout(() => setShowProjectSwitchToast(false), 4500)
+    } catch (err) {
+      console.error('Failed to open local project:', err)
+      alert('Error opening project')
+    }
+  }
+
+  // Handle Delete local project from IndexedDB
+  const handleDeleteLocalProject = async (id: string) => {
+    await deleteProjectFromIDB(id)
+    if (activeProjectId === id) {
+      await clearActiveSessionFromIDB()
+      setActiveProjectId(null)
+    }
+    const updated = await getAllProjectsFromIDB()
+    setLocalProjects(updated)
+  }
+
+  // Handle Load project from history (Cloud Supabase)
   const handleSelectProject = (proj: ProjectMetadata) => {
     setProjectName(proj.project_name)
     if (proj.smooth_settings) {
@@ -538,7 +819,7 @@ export function App() {
     }
   }
 
-  // Handle Delete project from history
+  // Handle Delete project from history (Cloud Supabase)
   const handleDeleteProject = async (id: string) => {
     await deleteProjectMetadata(id)
     const updated = await fetchProjectHistory()
@@ -550,23 +831,27 @@ export function App() {
     pushSnapshot(timeBlocks, defaultSmoothSettings, transformSettings, selectedBlockId)
   }
 
-  // Clear video & wipe local storage
-  const handleClearVideo = async () => {
+  // Create New Project / Close project & return to manager/uploader
+  const handleNewProject = async () => {
     cleanCurrentVideoUrl()
     setVideoUrl(null)
     setVideoFile(null)
     setMetadata(null)
+    setActiveProjectId(null)
     setTrimRange({ start: 0, end: 0 })
     setTimeBlocks([])
     setTransformSettings(defaultTransformSettings)
+    setSmoothSettings(defaultSmoothSettings)
     setHistoryStack([])
     setHistoryIndex(-1)
 
-    await clearVideoFromIDB()
+    await clearActiveSessionFromIDB()
     localStorage.removeItem('smoot_project_name')
     localStorage.removeItem('smoot_metadata')
     localStorage.removeItem('smoot_time_blocks')
   }
+
+  const handleClearVideo = handleNewProject
 
   return (
     <div className={`h-full h-[100dvh] max-h-[100dvh] flex flex-col bg-[#08090e] text-slate-100 selection:bg-violet-600/30 selection:text-violet-200 overflow-hidden`}>
@@ -584,6 +869,8 @@ export function App() {
         canRedo={historyIndex < historyStack.length - 1}
         onUndo={handleUndo}
         onRedo={handleRedo}
+        projectsCount={localProjects.length}
+        isAutoSaved={isAutoSaved}
         lang={lang}
         setLang={handleSetLang}
       />
@@ -597,6 +884,38 @@ export function App() {
           </div>
           <button
             onClick={() => setShowRestoredNotice(false)}
+            className="text-[10px] text-white/70 hover:text-white px-1.5 py-0.5 rounded cursor-pointer"
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
+      {/* Project Saved Toast */}
+      {showProjectSavedToast && (
+        <div className="w-full bg-gradient-to-r from-emerald-900/90 via-green-900/90 to-teal-900/90 border-b border-emerald-500/30 py-1.5 px-3 flex items-center justify-between text-xs text-emerald-200 shadow-md animate-in slide-in-from-top duration-200 z-40">
+          <div className="flex items-center gap-2">
+            <Save className="w-4 h-4 text-emerald-300 shrink-0" />
+            <span>{t.projectSavedSuccess}</span>
+          </div>
+          <button
+            onClick={() => setShowProjectSavedToast(false)}
+            className="text-[10px] text-white/70 hover:text-white px-1.5 py-0.5 rounded cursor-pointer"
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
+      {/* Project Switch Toast */}
+      {showProjectSwitchToast && (
+        <div className="w-full bg-gradient-to-r from-indigo-900/90 via-violet-900/90 to-purple-900/90 border-b border-violet-500/30 py-1.5 px-3 flex items-center justify-between text-xs text-violet-200 shadow-md animate-in slide-in-from-top duration-200 z-40">
+          <div className="flex items-center gap-2">
+            <FolderOpen className="w-4 h-4 text-violet-300 shrink-0" />
+            <span>{t.switchProjectNotice}</span>
+          </div>
+          <button
+            onClick={() => setShowProjectSwitchToast(false)}
             className="text-[10px] text-white/70 hover:text-white px-1.5 py-0.5 rounded cursor-pointer"
           >
             ✕
@@ -883,10 +1202,15 @@ export function App() {
       <HistoryModal
         isOpen={isHistoryOpen}
         onClose={() => setIsHistoryOpen(false)}
-        projects={projects}
-        onSelectProject={handleSelectProject}
-        onDeleteProject={handleDeleteProject}
+        localProjects={localProjects}
+        onOpenLocalProject={handleOpenLocalProject}
+        onDeleteLocalProject={handleDeleteLocalProject}
+        onNewProject={handleNewProject}
+        cloudProjects={projects}
+        onSelectCloudProject={handleSelectProject}
+        onDeleteCloudProject={handleDeleteProject}
         isSupabaseConnected={isSupabaseConnected}
+        activeProjectId={activeProjectId}
         lang={lang}
       />
 

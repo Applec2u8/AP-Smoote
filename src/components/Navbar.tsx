@@ -23,6 +23,8 @@ interface NavbarProps {
   canRedo?: boolean
   onUndo?: () => void
   onRedo?: () => void
+  projectsCount?: number
+  isAutoSaved?: boolean
   lang: Language
   setLang: (lang: Language) => void
 }
@@ -40,6 +42,8 @@ export const Navbar: React.FC<NavbarProps> = ({
   canRedo = false,
   onUndo,
   onRedo,
+  projectsCount = 0,
+  isAutoSaved = false,
   lang,
   setLang,
 }) => {
@@ -86,6 +90,12 @@ export const Navbar: React.FC<NavbarProps> = ({
               className="bg-transparent text-xs sm:text-sm font-medium text-slate-200 hover:bg-white/[0.04] focus:bg-white/[0.08] focus:text-white px-2 py-1 rounded-md border border-transparent focus:border-violet-500/50 outline-none transition-all w-36 xl:w-48 truncate"
               title="Click to rename project"
             />
+            {hasVideo && isAutoSaved && (
+              <span className="inline-flex items-center gap-1 text-[10px] text-emerald-400 bg-emerald-950/40 border border-emerald-500/30 px-2 py-0.5 rounded-full whitespace-nowrap animate-in fade-in">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                <span>{t.autoSavedBadge}</span>
+              </span>
+            )}
           </div>
         </div>
 
@@ -129,14 +139,19 @@ export const Navbar: React.FC<NavbarProps> = ({
               </button>
             )}
 
-            {/* Project History Button */}
+            {/* Project Workspace Button */}
             <button
               onClick={onOpenHistory}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-300 hover:text-white bg-slate-800/60 hover:bg-slate-700/60 border border-white/10 rounded-lg transition-colors cursor-pointer whitespace-nowrap shrink-0"
-              title={t.historyBtn}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-200 hover:text-white bg-slate-800/80 hover:bg-slate-700/80 border border-white/10 rounded-lg transition-colors cursor-pointer whitespace-nowrap shrink-0 group"
+              title={t.projectManagerBtn}
             >
-              <History className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-              <span>{t.historyBtn}</span>
+              <History className="w-3.5 h-3.5 text-violet-400 shrink-0 group-hover:scale-110 transition-transform" />
+              <span>{t.projectManagerBtn}</span>
+              {projectsCount > 0 && (
+                <span className="px-1.5 py-0.2 rounded-full bg-violet-500/20 text-violet-300 font-mono text-[10px]">
+                  {projectsCount}
+                </span>
+              )}
             </button>
 
             {/* Supabase Status Badge */}
@@ -198,13 +213,20 @@ export const Navbar: React.FC<NavbarProps> = ({
               </button>
             )}
 
-            {/* 2. ປະຫວັດ (History) */}
+            {/* 2. ໂປຣເຈັກ & ປະຫວັດ (Project Workspace) */}
             <button
               onClick={() => handleMobileAction(onOpenHistory)}
-              className="flex items-center gap-2.5 w-full px-3 py-2.5 rounded-lg text-xs font-semibold text-slate-200 hover:text-white bg-slate-800/60 hover:bg-slate-700/80 border border-white/[0.06] transition-all text-left cursor-pointer"
+              className="flex items-center justify-between w-full px-3 py-2.5 rounded-lg text-xs font-semibold text-slate-200 hover:text-white bg-slate-800/60 hover:bg-slate-700/80 border border-white/[0.06] transition-all text-left cursor-pointer"
             >
-              <History className="w-4 h-4 text-violet-400 shrink-0" />
-              <span>ປະຫວັດ (History)</span>
+              <div className="flex items-center gap-2.5">
+                <History className="w-4 h-4 text-violet-400 shrink-0" />
+                <span>{t.projectManagerBtn}</span>
+              </div>
+              {projectsCount > 0 && (
+                <span className="px-1.5 py-0.2 rounded-full bg-violet-500/20 text-violet-300 font-mono text-[10px]">
+                  {projectsCount}
+                </span>
+              )}
             </button>
 
             {/* 3. Setting (Supabase & System Settings) */}

@@ -195,15 +195,28 @@ export const translations = {
     startExportBtn: 'Export MP4',
     cancelWord: 'ຍົກເລີກ',
 
-    // History Modal
-    historyModalTitle: 'ປະຫວັດໂປຣເຈັກ & ການຕັ້ງຄ່າ (Metadata History)',
+    // Project Workspace & History Modal
+    historyModalTitle: 'ລະບົບຈັດການໂປຣເຈັກ & ປະຫວັດ (Project Workspace)',
+    historyModalSubtitle: 'ຈັດເກັບວິດີໂອຕົ້ນສະບັບ ແລະ ການຕັ້ງຄ່າທັງໝົດລົງໃນ IndexedDB ແບບ 100%',
     historySyncedNotice: 'ຊິງຄ໌ຈາກຕາຕະລາງ video_projects ໃນ Supabase',
-    historyLocalNotice: 'ຈັດເກັບໃນ Local Storage ເຄື່ອງຂອງທ່ານ',
-    noHistoryTitle: 'ຍັງບໍ່ມີປະຫວັດການບັນທຶກການຕັ້ງຄ່າ',
-    noHistoryDesc: 'ເມື່ອທ່ານກົດ "ບັນທຶກການຕັ້ງຄ່າ (Metadata)" ຂໍ້ມູນຈະປະກົດຢູ່ນີ້',
+    historyLocalNotice: 'ຈັດເກັບວິດີໂອ & ການຕັ້ງຄ່າລົງໃນ IndexedDB ເຄື່ອງຂອງທ່ານ 100%',
+    tabLocalProjects: 'ໂປຣເຈັກໃນເຄື່ອງ (IndexedDB)',
+    tabCloudProjects: 'Supabase Cloud (Metadata)',
+    noHistoryTitle: 'ຍັງບໍ່ມີໂປຣເຈັກທີ່ບັນທຶກໄວ້',
+    noHistoryDesc: 'ເມື່ອທ່ານສ້າງ ຫຼື ແກ້ໄຂວິດີໂອ ລະບົບຈະບັນທຶກອັດຕະໂນມັດ ຫຼື ກົດ "ບັນທຶກໂປຣເຈັກ"',
     loadConfigBtn: 'ໂຫຼດຄ່າ',
-    deleteItemTooltip: 'ລຶບລາຍການ',
+    openProjectBtn: 'ເປີດໂປຣເຈັກ (Resume)',
+    newProjectBtn: '+ ສ້າງໂປຣເຈັກໃໝ່',
+    deleteItemTooltip: 'ລຶບໂປຣເຈັກ',
+    confirmDeleteProject: 'ທ່ານແນ່ໃຈຫຼືບໍ່ທີ່ຈະລຶບໂປຣເຈັກນີ້? ໄຟລ໌ວິດີໂອ ແລະ ການຕັ້ງຄ່າຈະຖືກລຶບອອກຈາກ IndexedDB',
     fileWord: 'ໄຟລ໌:',
+    projectSavedSuccess: 'ບັນທຶກໂປຣເຈັກ ແລະ ໄຟລ໌ວິດີໂອລົງ IndexedDB ສຳເລັດ!',
+    autoSavedBadge: 'Auto-saved',
+    saveProjectBtn: 'ບັນທຶກໂປຣເຈັກ (Save Project)',
+    projectManagerBtn: 'ຈັດການໂປຣເຈັກ',
+    closeProjectBtn: 'ປິດໂປຣເຈັກ',
+    switchProjectNotice: 'ສັບປ່ຽນໂປຣເຈັກສຳເລັດ ພ້ອມແກ້ໄຂຕໍ່ໄດ້ທັນທີ',
+
 
     // Supabase Config Modal & Security
     supabaseModalTitle: 'ການຕັ້ງຄ່າ Supabase (Secured)',
@@ -425,15 +438,28 @@ export const translations = {
     startExportBtn: 'Start MP4 Export',
     cancelWord: 'Cancel',
 
-    // History Modal
-    historyModalTitle: 'Project History & Settings (Metadata)',
+    // Project Workspace & History Modal
+    historyModalTitle: 'Project Workspace & History (Project Manager)',
+    historyModalSubtitle: 'Full video files & editing configurations saved client-side in IndexedDB 100%',
     historySyncedNotice: 'Synced with Supabase video_projects table',
-    historyLocalNotice: 'Saved in Local Browser Storage',
+    historyLocalNotice: 'Full video files & configs saved locally in IndexedDB',
+    tabLocalProjects: 'Local Projects (IndexedDB)',
+    tabCloudProjects: 'Cloud History (Supabase)',
     noHistoryTitle: 'No saved projects found',
-    noHistoryDesc: 'When you click "Save Settings (Metadata)", entries will appear here.',
+    noHistoryDesc: 'Create or edit a video to auto-save, or click "Save Project" anytime.',
     loadConfigBtn: 'Load Settings',
-    deleteItemTooltip: 'Delete item',
+    openProjectBtn: 'Open / Resume Project',
+    newProjectBtn: '+ New Project',
+    deleteItemTooltip: 'Delete project',
+    confirmDeleteProject: 'Are you sure you want to delete this project? Its video and all cut settings will be removed from IndexedDB.',
     fileWord: 'File:',
+    projectSavedSuccess: 'Project & full video blob saved to IndexedDB successfully!',
+    autoSavedBadge: 'Auto-saved',
+    saveProjectBtn: 'Save Project',
+    projectManagerBtn: 'Project Workspace',
+    closeProjectBtn: 'Close Project',
+    switchProjectNotice: 'Project resumed successfully! Ready to edit without re-uploading.',
+
 
     // Supabase Config Modal & Security
     supabaseModalTitle: 'Supabase Configuration (Secured)',
