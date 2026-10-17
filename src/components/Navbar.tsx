@@ -3,7 +3,6 @@ import {
   Database,
   History,
   Settings,
-  Film,
   Menu,
   X,
 } from 'lucide-react'
@@ -62,7 +61,7 @@ export const Navbar: React.FC<NavbarProps> = ({
         <div className="flex items-center gap-2 sm:gap-3 min-w-0 shrink-0">
           <div className="flex items-center gap-2 group cursor-pointer">
             <div className="relative flex items-center justify-center w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-gradient-to-tr from-violet-600 via-indigo-600 to-cyan-500 shadow-md shadow-violet-500/25 ring-1 ring-white/20 group-hover:scale-105 transition-transform shrink-0">
-              <Film className="w-4 h-4 text-white" />
+              <Sparkles className="w-4 h-4 text-white" />
               <span className="absolute -bottom-0.5 -right-0.5 flex h-2 w-2">
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-75"></span>
                 <span className="relative inline-flex rounded-full h-2 w-2 bg-cyan-500"></span>
