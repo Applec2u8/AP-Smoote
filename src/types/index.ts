@@ -19,6 +19,7 @@ export interface SmoothSettings {
   brightness: number // 80 - 120
   contrast: number // 80 - 140
   enableStabilizeSim: boolean
+  playbackSpeed?: number // 0.1 - 1.0 (Slow motion factor: 1.0 = Normal, 0.5 = 2x Slow, 0.25 = 4x Slow, 0.1 = 10x Slow)
 }
 
 export type TargetFPS = 30 | 60 | 120
@@ -29,7 +30,32 @@ export interface ExportSettings {
   fps: TargetFPS
   resolution: TargetResolution
   quality: 'high' | 'medium' | 'maximum'
-  format: 'webm' | 'mp4'
+  format: 'mp4' | 'webm'
+}
+
+export type VideoAspectRatio = 'original' | '16:9' | '9:16' | '1:1' | '4:5' | '4:3' | '21:9'
+
+export type VideoFitMode = 'contain' | 'cover'
+
+export interface TrimRange {
+  start: number
+  end: number
+}
+
+export interface TimeBlock {
+  id: string
+  start: number
+  end: number
+  smoothSettings?: SmoothSettings
+  transformSettings?: VideoTransformSettings
+}
+
+export interface VideoTransformSettings {
+  aspectRatio: VideoAspectRatio
+  fitMode: VideoFitMode
+  zoom: number // 1.0 = 100%, up to 3.0 = 300%
+  panX?: number // -100 to 100 (% offset from center)
+  panY?: number // -100 to 100 (% offset from center)
 }
 
 export interface ProjectMetadata {
@@ -42,6 +68,9 @@ export interface ProjectMetadata {
   height: number
   smooth_settings: SmoothSettings
   export_settings: ExportSettings
+  trim_range?: TrimRange
+  time_blocks?: TimeBlock[]
+  transform_settings?: VideoTransformSettings
   created_at?: string
   updated_at?: string
 }

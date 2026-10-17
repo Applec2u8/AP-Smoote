@@ -10,7 +10,7 @@ import {
   ShieldCheck,
 } from 'lucide-react'
 import confetti from 'canvas-confetti'
-import { ExportSettings, SmoothSettings, TargetFPS, VideoMetadata } from '../types'
+import { ExportSettings, SmoothSettings, TargetFPS, TimeBlock, TrimRange, VideoMetadata, VideoTransformSettings } from '../types'
 import {
   calculateTargetDimensions,
   exportSmoothedVideo,
@@ -25,6 +25,9 @@ interface ExportModalProps {
   metadata: VideoMetadata | null
   smoothSettings: SmoothSettings
   projectName: string
+  trimRange?: TrimRange
+  transformSettings?: VideoTransformSettings
+  timeBlocks?: TimeBlock[]
   lang: Language
 }
 
@@ -35,6 +38,9 @@ export const ExportModal: React.FC<ExportModalProps> = ({
   metadata,
   smoothSettings,
   projectName,
+  trimRange,
+  transformSettings,
+  timeBlocks,
   lang,
 }) => {
   const t = translations[lang]
@@ -42,7 +48,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({
     fps: 60,
     resolution: '1080p',
     quality: 'high',
-    format: 'webm',
+    format: 'mp4',
   })
 
   const [isExporting, setIsExporting] = useState(false)
@@ -64,7 +70,8 @@ export const ExportModal: React.FC<ExportModalProps> = ({
   const dims = calculateTargetDimensions(
     metadata?.width || 1920,
     metadata?.height || 1080,
-    exportSettings.resolution
+    exportSettings.resolution,
+    transformSettings?.aspectRatio || 'original'
   )
 
   const handleStartExport = async () => {
@@ -80,7 +87,10 @@ export const ExportModal: React.FC<ExportModalProps> = ({
         smoothSettings,
         exportSettings,
         (stats) => setProgressStats(stats),
-        () => cancelRef.current
+        () => cancelRef.current,
+        trimRange,
+        transformSettings,
+        timeBlocks
       )
 
       const url = URL.createObjectURL(blob)
@@ -238,24 +248,51 @@ export const ExportModal: React.FC<ExportModalProps> = ({
                     {dims.width} × {dims.height} px
                   </span>
                 </div>
+                {trimRange && metadata && (trimRange.start > 0 || trimRange.end < metadata.duration) && (
+                  <div className="flex items-center justify-between text-slate-300">
+                    <span className="text-slate-400">Trimmed Duration:</span>
+                    <span className="font-mono font-semibold text-amber-300">
+                      {(trimRange.end - trimRange.start).toFixed(2)}s (from {metadata.duration.toFixed(1)}s)
+                    </span>
+                  </div>
+                )}
+                {transformSettings && transformSettings.aspectRatio !== 'original' && (
+                  <div className="flex items-center justify-between text-slate-300">
+                    <span className="text-slate-400">Aspect Ratio:</span>
+                    <span className="font-mono font-semibold text-violet-300">
+                      {transformSettings.aspectRatio} ({transformSettings.fitMode})
+                    </span>
+                  </div>
+                )}
                 <div className="flex items-center justify-between text-slate-300">
                   <span className="text-slate-400">{t.targetSmoothFlow}</span>
                   <span className="font-mono font-semibold text-violet-300">
                     {exportSettings.fps} FPS ({smoothSettings.intensity}% Smooth)
                   </span>
                 </div>
+                {smoothSettings.playbackSpeed && smoothSettings.playbackSpeed < 1.0 && (
+                  <div className="flex items-center justify-between text-slate-300">
+                    <span className="text-slate-400">Slow & Smooth Mode:</span>
+                    <span className="font-mono font-semibold text-cyan-300">
+                      {smoothSettings.playbackSpeed}x Speed ({(1 / smoothSettings.playbackSpeed).toFixed(1)}x Slower)
+                    </span>
+                  </div>
+                )}
                 <div className="flex items-center justify-between text-slate-300">
                   <span className="text-slate-400">{t.fileFormat}</span>
-                  <span className="font-mono font-semibold text-slate-200">
-                    WebM VP9 (High Efficiency)
+                  <span className="font-mono font-bold text-emerald-400 flex items-center gap-1.5">
+                    <span>.mp4 (H.264 / AAC)</span>
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                      iOS & Android
+                    </span>
                   </span>
                 </div>
               </div>
 
-              <div className="flex items-center gap-2 text-[11px] text-slate-400 pt-1">
+              <div className="flex items-center gap-2 text-[11px] text-emerald-400/90 pt-1">
                 <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0" />
                 <span>
-                  {t.exportPrivacyNotice}
+                  {t.iosPhotosCompatible}
                 </span>
               </div>
             </>

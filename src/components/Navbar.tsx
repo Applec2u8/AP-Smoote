@@ -1,4 +1,3 @@
-import React, { useState } from 'react'
 import {
   Sparkles,
   Database,
@@ -9,6 +8,7 @@ import {
   X,
 } from 'lucide-react'
 import { Language, translations } from '../utils/i18n'
+import { useState } from 'react'
 
 interface NavbarProps {
   projectName: string
@@ -19,6 +19,10 @@ interface NavbarProps {
   onOpenSettings: () => void
   onLoadDemo: () => void
   isGeneratingDemo: boolean
+  canUndo?: boolean
+  canRedo?: boolean
+  onUndo?: () => void
+  onRedo?: () => void
   lang: Language
   setLang: (lang: Language) => void
 }
@@ -32,6 +36,10 @@ export const Navbar: React.FC<NavbarProps> = ({
   onOpenSettings,
   onLoadDemo,
   isGeneratingDemo,
+  canUndo = false,
+  canRedo = false,
+  onUndo,
+  onRedo,
   lang,
   setLang,
 }) => {
@@ -87,22 +95,20 @@ export const Navbar: React.FC<NavbarProps> = ({
           <div className="flex items-center p-0.5 rounded-lg bg-slate-900/90 border border-white/10 text-[11px] sm:text-xs shadow-inner shrink-0">
             <button
               onClick={() => setLang('la')}
-              className={`px-2 py-1 rounded-md font-semibold transition-all whitespace-nowrap cursor-pointer ${
-                lang === 'la'
-                  ? 'bg-gradient-to-r from-violet-600 to-indigo-600 text-white shadow-sm'
-                  : 'text-slate-400 hover:text-slate-200'
-              }`}
+              className={`px-2 py-1 rounded-md font-semibold transition-all whitespace-nowrap cursor-pointer ${lang === 'la'
+                ? 'bg-gradient-to-r from-violet-600 to-indigo-600 text-white shadow-sm'
+                : 'text-slate-400 hover:text-slate-200'
+                }`}
               title="ພາສາລາວ (Lao)"
             >
               LA
             </button>
             <button
               onClick={() => setLang('en')}
-              className={`px-2 py-1 rounded-md font-semibold transition-all whitespace-nowrap cursor-pointer ${
-                lang === 'en'
-                  ? 'bg-gradient-to-r from-violet-600 to-indigo-600 text-white shadow-sm'
-                  : 'text-slate-400 hover:text-slate-200'
-              }`}
+              className={`px-2 py-1 rounded-md font-semibold transition-all whitespace-nowrap cursor-pointer ${lang === 'en'
+                ? 'bg-gradient-to-r from-violet-600 to-indigo-600 text-white shadow-sm'
+                : 'text-slate-400 hover:text-slate-200'
+                }`}
               title="English"
             >
               EN
@@ -136,11 +142,10 @@ export const Navbar: React.FC<NavbarProps> = ({
             {/* Supabase Status Badge */}
             <button
               onClick={onOpenSettings}
-              className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-lg border transition-all cursor-pointer whitespace-nowrap shrink-0 ${
-                isSupabaseConnected
-                  ? 'bg-emerald-950/40 text-emerald-300 border-emerald-500/30 hover:bg-emerald-900/40'
-                  : 'bg-amber-950/30 text-amber-300 border-amber-500/30 hover:bg-amber-900/40'
-              }`}
+              className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-lg border transition-all cursor-pointer whitespace-nowrap shrink-0 ${isSupabaseConnected
+                ? 'bg-emerald-950/40 text-emerald-300 border-emerald-500/30 hover:bg-emerald-900/40'
+                : 'bg-amber-950/30 text-amber-300 border-amber-500/30 hover:bg-amber-900/40'
+                }`}
               title={
                 isSupabaseConnected
                   ? t.supabaseConnectedTooltip
@@ -150,9 +155,8 @@ export const Navbar: React.FC<NavbarProps> = ({
               <Database className="w-3.5 h-3.5 shrink-0" />
               <span>{isSupabaseConnected ? t.supabaseSync : t.localMode}</span>
               <span
-                className={`w-2 h-2 rounded-full shrink-0 ${
-                  isSupabaseConnected ? 'bg-emerald-400' : 'bg-amber-400'
-                }`}
+                className={`w-2 h-2 rounded-full shrink-0 ${isSupabaseConnected ? 'bg-emerald-400' : 'bg-amber-400'
+                  }`}
               />
             </button>
 
@@ -214,11 +218,10 @@ export const Navbar: React.FC<NavbarProps> = ({
               </div>
 
               {/* Supabase status inside mobile setting button */}
-              <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-medium border ${
-                isSupabaseConnected
-                  ? 'bg-emerald-950/60 border-emerald-500/30 text-emerald-300'
-                  : 'bg-amber-950/60 border-amber-500/30 text-amber-300'
-              }`}>
+              <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-medium border ${isSupabaseConnected
+                ? 'bg-emerald-950/60 border-emerald-500/30 text-emerald-300'
+                : 'bg-amber-950/60 border-amber-500/30 text-amber-300'
+                }`}>
                 <span className={`w-1.5 h-1.5 rounded-full ${isSupabaseConnected ? 'bg-emerald-400' : 'bg-amber-400'}`} />
                 <span>{isSupabaseConnected ? 'Sync' : 'Local'}</span>
               </span>

@@ -1,0 +1,43 @@
+{
+  "name": "Smoot - Video Smoot Studio",
+  "short_name": "Smoot",
+  "description": "Client-side Video Smoothing, Frame Blending, and High-FPS Export Tool",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#090a0f",
+  "theme_color": "#090a0f",
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/logo-icon.png",
+      "sizes": "804x804",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}
